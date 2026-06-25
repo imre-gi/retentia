@@ -484,7 +484,7 @@ Optional field:
 ### `dashboard_snapshot`
 
 Returns a compact dashboard payload with agents, tasks, activities, memories,
-graph edges, recent events, and a context preview.
+graph edges, recent events, evidence chunk totals, and a context preview.
 
 Optional field:
 
@@ -719,7 +719,8 @@ retentia dashboard --limit 80
 
 The payload includes:
 
-- totals for events, memories, graph edges, agents, tasks, and projects
+- totals for events, memories, graph edges, evidence chunks, agents, tasks, and
+  projects
 - agent summaries
 - task summaries
 - recent activities
@@ -834,35 +835,52 @@ Open the command palette and search for `Retentia`.
 
 Important commands:
 
-- `Retentia: Setup (Enable + Start Worker)`
-- `Retentia: Enable MCP`
+- `Retentia: Install MCP for Codex`
+- `Retentia: Enable MCP for Codex`
 - `Retentia: Initialize Store`
-- `Retentia: Start Worker`
-- `Retentia: Stop Worker`
-- `Retentia: Worker Status`
 - `Retentia: Import Copilot, Codex, and Claude Code Tasks`
-- `Retentia: Project Explorer + Visualizer`
-- `Retentia: Status Dashboard`
-- `Retentia: Add Observation`
-- `Retentia: Add Summary`
+- `Retentia: Run Doctor`
+- `Retentia: Agent Command Center`
+- `Retentia: Inspect Agents and Swarms`
+- `Retentia: Open Settings`
+- `Retentia: Add Memory`
+- `Retentia: Save Session Memory`
 - `Retentia: Search Memory`
 - `Retentia: Generate Context Pack`
 - `Retentia: Open Memory File`
 
+The Retentia activity bar view includes a compact Quick Input panel. The panel
+keeps frequent work visible: add a memory, save a session summary, open the
+dashboard, run Doctor, sync tasks, and refresh status. `Add Memory` and
+`Save Summary` open focused popover forms that can be closed with the close
+button, Cancel, the backdrop, or Escape. Setup and path settings remain in the
+command palette so the sidebar stays focused on daily capture.
+
+`Retentia: Inspect Agents and Swarms` opens the v2 control plane dashboard. It
+has four tabs:
+
+- `Control`: live agent/task map with an inspector for reasoning, activity, and
+  context preview.
+- `Memory`: durable memories plus the current compact context pack.
+- `Quality`: retrieval health, memory confidence, evidence coverage, pinned
+  context, context-budget usage, memory-kind distribution, and Doctor checks.
+- `Operations`: execution trends, task success/failure mix, active load, agent
+  workload, activity types, and project signal distribution.
+
 Useful settings:
 
-| Setting | Purpose |
-| --- | --- |
-| `retentia.cliPath` | Explicit CLI path, such as `/path/to/retentia/dist/cli.js` or `retentia`. |
-| `retentia.defaultProject` | Default project for new entries. |
-| `retentia.autoSyncTasks` | Auto-sync task execution on dashboard refresh. |
-| `retentia.enabledProviders` | Provider list used by the extension sync flow. |
-| `retentia.autoSyncLookbackDays` | Session log lookback window. |
-| `retentia.autoSyncMaxImport` | Max imported tasks per sync run. |
-| `retentia.autoSyncMaxFiles` | Max session files scanned per provider. |
-| `retentia.codexSessionsPath` | Optional Codex session path override. |
-| `retentia.claudeSessionsPath` | Optional Claude session path override. |
-| `retentia.executionReportLimit` | Max entries loaded into visualizer and explorer views. |
+| Setting                         | Purpose                                                                   |
+| ------------------------------- | ------------------------------------------------------------------------- |
+| `retentia.cliPath`              | Explicit CLI path, such as `/path/to/retentia/dist/cli.js` or `retentia`. |
+| `retentia.defaultProject`       | Default project for new entries.                                          |
+| `retentia.autoSyncTasks`        | Auto-sync task execution on dashboard refresh.                            |
+| `retentia.enabledProviders`     | Provider list used by the extension sync flow.                            |
+| `retentia.autoSyncLookbackDays` | Session log lookback window.                                              |
+| `retentia.autoSyncMaxImport`    | Max imported tasks per sync run.                                          |
+| `retentia.autoSyncMaxFiles`     | Max session files scanned per provider.                                   |
+| `retentia.codexSessionsPath`    | Optional Codex session path override.                                     |
+| `retentia.claudeSessionsPath`   | Optional Claude session path override.                                    |
+| `retentia.executionReportLimit` | Max entries loaded into visualizer and explorer views.                    |
 
 ## Development
 
@@ -1035,16 +1053,6 @@ constraints, preferences, artifacts, todos, and episodes.
 
 Use an event for the timeline of work. Use a memory when the information should
 influence future decisions.
-
-### Why are some settings still named `retentia.*`?
-
-The project was previously named `retentia`. Settings and command IDs kept the
-old prefix for compatibility with existing local installations.
-
-### Is the old `retentia` name still supported?
-
-Compatibility paths remain in the installer and VS Code extension, but the
-current package name and primary CLI binary are `retentia`.
 
 ## License
 

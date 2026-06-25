@@ -1326,36 +1326,43 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
     <style>
       :root {
         color-scheme: dark;
-        --bg: oklch(0.17 0.018 248);
-        --panel: oklch(0.22 0.02 248);
-        --panel2: oklch(0.26 0.022 248);
-        --line: oklch(0.38 0.03 248);
-        --text: oklch(0.94 0.008 248);
-        --muted: oklch(0.72 0.018 248);
+        --bg: oklch(0.16 0.014 246);
+        --bg-2: oklch(0.19 0.016 246);
+        --panel: oklch(0.215 0.018 246);
+        --panel2: oklch(0.255 0.02 246);
+        --line: oklch(0.38 0.026 246);
+        --line-soft: oklch(0.31 0.02 246);
+        --text: oklch(0.94 0.008 246);
+        --muted: oklch(0.72 0.017 246);
         --green: oklch(0.72 0.14 155);
         --amber: oklch(0.78 0.14 80);
         --red: oklch(0.68 0.16 35);
         --blue: oklch(0.7 0.12 235);
+        --violet: oklch(0.72 0.1 292);
       }
       * { box-sizing: border-box; }
       html, body { min-height: 100%; }
-      body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); }
+      body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); }
       .shell { min-height: 100vh; padding: 14px; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 10px; }
-      .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-      h1 { margin: 0; font-size: 20px; font-weight: 720; letter-spacing: 0; }
-      .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
-      .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-      button { border: 1px solid var(--line); background: var(--panel2); color: var(--text); border-radius: 7px; padding: 8px 10px; cursor: pointer; }
-      button:hover { border-color: var(--blue); }
-      .tab { color: var(--muted); }
-      .tab.active { color: var(--text); border-color: var(--blue); }
-      .live { display: inline-flex; align-items: center; gap: 7px; color: var(--green); font-size: 12px; min-height: 32px; }
-      .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--green); box-shadow: 0 0 0 5px color-mix(in oklch, var(--green), transparent 80%); }
-      .metrics { display: grid; grid-template-columns: repeat(6, minmax(95px, 1fr)); gap: 8px; }
+      .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid var(--line-soft); background: var(--bg-2); border-radius: 8px; padding: 10px 12px; }
+      h1 { margin: 0; font-size: 18px; font-weight: 720; letter-spacing: 0; }
+      .sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+      .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
+      button { border: 1px solid var(--line); background: var(--panel2); color: var(--text); border-radius: 7px; padding: 7px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+      button:hover { border-color: var(--blue); background: oklch(0.28 0.025 246); }
+      button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+      .tab { color: var(--muted); background: transparent; }
+      .tab.active { color: var(--text); border-color: var(--blue); background: color-mix(in oklch, var(--blue), transparent 82%); }
+      .live { display: inline-flex; align-items: center; gap: 7px; color: var(--green); font-size: 12px; min-height: 30px; }
+      .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--green); box-shadow: 0 0 0 5px color-mix(in oklch, var(--green), transparent 84%); }
+      .metrics { display: grid; grid-template-columns: repeat(7, minmax(92px, 1fr)); gap: 8px; }
       .metric, .panel, .map-panel, .inspector { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; }
       .metric { padding: 8px 10px; min-width: 0; }
-      .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+      .k { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
       .v { font-size: 18px; font-weight: 760; margin-top: 3px; }
+      .insight-plane { min-height: 0; overflow: auto; display: grid; gap: 10px; }
+      .insight-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+      .wide-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 10px; }
       .trend-plane { padding: 10px 12px; display: grid; gap: 10px; }
       .trend-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
       .trend-card { min-width: 0; display: grid; gap: 8px; }
@@ -1390,31 +1397,53 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .state-pass { color: var(--green); border-color: color-mix(in oklch, var(--green), transparent 35%); }
       .state-warn { color: var(--amber); border-color: color-mix(in oklch, var(--amber), transparent 35%); }
       .reasoning, .context { white-space: pre-wrap; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; line-height: 1.45; }
-      .health-plane { padding: 10px 12px; display: grid; gap: 8px; }
-      .health-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+      .health-plane { padding: 10px 12px; display: grid; gap: 8px; min-width: 0; }
+      .health-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
       .health-item { border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-width: 0; }
       .health-item strong { display: block; font-size: 12px; margin-bottom: 4px; }
+      .stat-tile { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 10px 12px; min-width: 0; display: grid; gap: 4px; }
+      .stat-tile strong { font-size: 20px; line-height: 1.15; }
+      .stat-tile span { color: var(--muted); font-size: 12px; }
+      .stat-tile.good strong { color: var(--green); }
+      .stat-tile.warn strong { color: var(--amber); }
+      .stat-tile.bad strong { color: var(--red); }
+      .stat-panel { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; min-width: 0; overflow: hidden; }
+      .stat-body { padding: 10px 12px; display: grid; gap: 10px; }
+      .meter-row { display: grid; gap: 5px; }
+      .meter-label { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; }
+      .meter { height: 8px; border-radius: 999px; background: oklch(0.17 0.014 246); overflow: hidden; border: 1px solid var(--line-soft); }
+      .meter-fill { height: 100%; width: var(--value); background: var(--blue); }
+      .meter-fill.good { background: var(--green); }
+      .meter-fill.warn { background: var(--amber); }
+      .meter-fill.bad { background: var(--red); }
+      .distribution { display: grid; gap: 8px; }
+      .dist-row { display: grid; grid-template-columns: minmax(80px, .8fr) minmax(90px, 1fr) auto; gap: 8px; align-items: center; font-size: 12px; }
+      .dist-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dist-bar { height: 7px; border-radius: 999px; background: oklch(0.17 0.014 246); overflow: hidden; border: 1px solid var(--line-soft); }
+      .dist-fill { height: 100%; width: var(--value); background: var(--violet); }
+      .dist-value { color: var(--muted); font-variant-numeric: tabular-nums; }
       .memory-plane { min-height: 0; overflow: auto; padding: 12px; }
       .hidden { display: none; }
       .error { border: 1px solid var(--red); color: var(--red); padding: 10px; border-radius: 8px; margin-bottom: 12px; }
-      @media (max-width: 980px) { .metrics, .trend-grid, .workbench { grid-template-columns: 1fr; } .top { align-items: flex-start; flex-direction: column; } .map-panel { min-height: 520px; } .graph svg { min-width: 820px; min-height: 520px; } }
+      @media (max-width: 1120px) { .metrics { grid-template-columns: repeat(4, minmax(110px, 1fr)); } .insight-grid, .wide-grid { grid-template-columns: 1fr; } }
+      @media (max-width: 980px) { .metrics, .trend-grid, .workbench { grid-template-columns: 1fr; } .top { align-items: flex-start; flex-direction: column; } .actions { justify-content: flex-start; } .map-panel { min-height: 520px; } .graph svg { min-width: 820px; min-height: 520px; } .health-list { grid-template-columns: 1fr; } }
     </style>
   </head>
   <body>
     <main class="shell">
       <div class="top">
         <div><h1>Retentia Control Plane</h1><div id="dashboardSubtitle" class="sub">${loading ? "Waiting for Retentia v2 stream" : "Retentia v2 stream"}</div></div>
-        <div class="actions"><button class="tab active" data-view="control">Control</button><button class="tab" data-view="memory">Memory</button><span id="streamState" class="live"><span class="dot"></span>Connecting</span><button data-command="refresh">Refresh</button><button data-command="doctor">Doctor</button><button data-command="setup">Install MCP</button></div>
+        <div class="actions"><button class="tab active" data-view="control">Control</button><button class="tab" data-view="memory">Memory</button><button class="tab" data-view="quality">Quality</button><button class="tab" data-view="operations">Operations</button><span id="streamState" class="live"><span class="dot"></span>Connecting</span><button data-command="refresh">Refresh</button><button data-command="doctor">Doctor</button><button data-command="setup">Install MCP</button></div>
       </div>
       <div id="dashboardError"></div>
       <section id="metricStrip" class="metrics"></section>
-      <section id="healthPlane" class="panel health-plane"></section>
-      <section id="trendPlane" class="panel trend-plane"></section>
       <section id="controlPlane" class="workbench">
         <div class="map-panel"><div class="panel-head"><h2>Agent Task Map</h2><span class="muted">Select latest active task in inspector</span></div><div id="graph" class="graph"></div></div>
         <aside class="inspector"><div class="panel-head"><h2>Inspector</h2><span id="updatedAt" class="muted">n/a</span></div><div id="inspectorBody" class="inspector-body"></div></aside>
       </section>
       <section id="memoryPlane" class="panel memory-plane hidden"></section>
+      <section id="qualityPlane" class="insight-plane hidden"></section>
+      <section id="operationsPlane" class="insight-plane hidden"></section>
     </main>
     <script nonce="${nonce}">
       const vscode = acquireVsCodeApi();
@@ -1447,9 +1476,12 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       }
 
       function setView(view) {
-        currentView = view === "memory" ? "memory" : "control";
+        const allowed = new Set(["control", "memory", "quality", "operations"]);
+        currentView = allowed.has(view) ? view : "control";
         document.getElementById("controlPlane").classList.toggle("hidden", currentView !== "control");
         document.getElementById("memoryPlane").classList.toggle("hidden", currentView !== "memory");
+        document.getElementById("qualityPlane").classList.toggle("hidden", currentView !== "quality");
+        document.getElementById("operationsPlane").classList.toggle("hidden", currentView !== "operations");
         for (const button of document.querySelectorAll("button[data-view]")) {
           button.classList.toggle("active", button.getAttribute("data-view") === currentView);
         }
@@ -1487,13 +1519,14 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
         if (updated) updated.textContent = String(payload.updatedAt || "n/a");
         setHtml("dashboardError", payload.errorHtml);
         setHtml("metricStrip", payload.metricsHtml);
-        setHtml("healthPlane", payload.healthHtml);
-        setHtml("trendPlane", payload.trendHtml);
         setHtml("graph", payload.graphHtml);
         setHtml("inspectorBody", payload.inspectorHtml);
         setHtml("memoryPlane", payload.memoryHtml);
+        setHtml("qualityPlane", payload.qualityHtml);
+        setHtml("operationsPlane", payload.operationsHtml);
         detailsByNode = payload.detailsByNode || {};
         bindMapNodes(String(payload.defaultNodeId || ""));
+        setView(currentView);
       });
 
       window.setInterval(requestStreamUpdate, 1500);
@@ -1528,6 +1561,8 @@ function buildAgentDashboardPayload(
       generatedAt,
       toNumber(totals.events) ?? 0,
       toNumber(totals.tasks) ?? 0,
+      toNumber(totals.memories) ?? 0,
+      toNumber(totals.evidenceChunks) ?? 0,
       activities[0] ? toText(activities[0].id) : "0",
       JSON.stringify(trends),
       toText(health.status),
@@ -1540,15 +1575,21 @@ function buildAgentDashboardPayload(
       metric("Agents", toNumber(totals.agents) ?? agents.length),
       metric("Active", activeTasks.length),
       metric("Tasks", toNumber(totals.tasks) ?? tasks.length),
-      metric("Activity", activities.length),
+      metric("Memories", toNumber(totals.memories) ?? memories.length),
       metric("Relations", edges.length),
       metric("Evidence", toNumber(totals.evidenceChunks) ?? 0),
     ].join(""),
-    healthHtml: renderHealthPlane(health),
-    trendHtml: renderTrendPlane(trends),
     graphHtml: renderAgentGraphSvg(graphNodes, edges, tasks),
     inspectorHtml: renderInspector(tasks, agents, activities, contextPreview),
     memoryHtml: renderMemoryPlane(memories, contextPreview),
+    qualityHtml: renderQualityPlane(health, memories, contextPreview, totals),
+    operationsHtml: renderOperationsPlane(
+      trends,
+      agents,
+      tasks,
+      activities,
+      totals,
+    ),
     detailsByNode: buildNodeDetails(tasks, agents, activities, contextPreview),
     defaultNodeId: focusTask ? `task:${toText(focusTask.id)}` : "",
   };
@@ -1636,6 +1677,276 @@ function formatDelta(value: number): string {
     return `+${value}`;
   }
   return String(value);
+}
+
+interface DashboardDistributionItem {
+  label: string;
+  value: number;
+  detail?: string;
+}
+
+function renderQualityPlane(
+  health: JsonResult,
+  memories: JsonResult[],
+  contextPreview: JsonResult,
+  totals: JsonResult,
+): string {
+  const totalMemories = toNumber(totals.memories) ?? memories.length;
+  const evidenceTotal = toNumber(totals.evidenceChunks) ?? 0;
+  const pinned = memories.filter((memory) => toBoolean(memory.pinned)).length;
+  const averageConfidence = getAverageConfidence(memories);
+  const highConfidence = memories.filter(
+    (memory) => (toNumber(memory.confidence) ?? 0) >= 0.8,
+  ).length;
+  const confidenceRatio = memories.length > 0 ? highConfidence / memories.length : 0;
+  const evidencePerMemory =
+    totalMemories > 0 ? evidenceTotal / totalMemories : 0;
+  const usedChars = toNumber(contextPreview.usedChars) ?? 0;
+  const maxChars = toNumber(contextPreview.maxChars) ?? 0;
+  const contextRatio = maxChars > 0 ? usedChars / maxChars : 0;
+
+  return `
+    <div class="insight-grid">
+      ${renderInsightMetric("Confidence", formatPercent(averageConfidence), `${highConfidence} high confidence memories in current sample`, toneForRatio(confidenceRatio, 0.6, 0.35))}
+      ${renderInsightMetric("Evidence coverage", `${evidencePerMemory.toFixed(1)}x`, `${evidenceTotal} evidence chunks across ${totalMemories} memories`, evidencePerMemory >= 1 ? "good" : evidenceTotal > 0 ? "warn" : "bad")}
+      ${renderInsightMetric("Pinned context", String(pinned), "Pinned memories are retrieval anchors", pinned > 0 ? "good" : "warn")}
+    </div>
+    <div class="wide-grid">
+      <section class="stat-panel">
+        <div class="panel-head"><h2>Retrieval Quality</h2><span class="muted">${memories.length} sampled memories</span></div>
+        <div class="stat-body">
+          ${renderMeter("Context budget", contextRatio, `${usedChars} of ${maxChars || "n/a"} characters used`, toneForCeiling(contextRatio, 0.72, 0.9))}
+          ${renderMeter("High confidence sample", confidenceRatio, `${highConfidence} of ${memories.length} sampled memories`, toneForRatio(confidenceRatio, 0.6, 0.35))}
+          ${renderDistribution("Memory kinds", countByField(memories, "kind"), "No memory-kind data yet.")}
+        </div>
+      </section>
+      <section class="panel health-plane">${renderHealthPlane(health)}</section>
+    </div>
+  `;
+}
+
+function renderOperationsPlane(
+  trends: JsonResult,
+  agents: JsonResult[],
+  tasks: JsonResult[],
+  activities: JsonResult[],
+  totals: JsonResult,
+): string {
+  const activeTasks = tasks.filter(
+    (task) => (toText(task.status) || "active") === "active",
+  ).length;
+  const completedTasks = tasks.filter(
+    (task) => toText(task.status) === "completed",
+  ).length;
+  const failedTasks = tasks.filter((task) => toText(task.status) === "failed")
+    .length;
+  const closedTasks = completedTasks + failedTasks;
+  const successRatio = closedTasks > 0 ? completedTasks / closedTasks : 0;
+  const eventTotal = toNumber(totals.events) ?? activities.length;
+
+  return `
+    <div class="insight-grid">
+      ${renderInsightMetric("Task success", closedTasks > 0 ? formatPercent(successRatio) : "n/a", `${completedTasks} done, ${failedTasks} failed`, closedTasks === 0 ? "" : toneForRatio(successRatio, 0.8, 0.55))}
+      ${renderInsightMetric("Active load", String(activeTasks), `${agents.length} agents seen in current snapshot`, activeTasks <= agents.length ? "good" : "warn")}
+      ${renderInsightMetric("Event density", String(eventTotal), `${activities.length} recent activities in view`, eventTotal > 0 ? "good" : "")}
+    </div>
+    <div class="wide-grid">
+      <section class="panel trend-plane">
+        <div class="panel-head"><h2>Execution Trend</h2><span class="muted">Recent daily and weekly movement</span></div>
+        ${renderTrendPlane(trends)}
+      </section>
+      <section class="stat-panel">
+        <div class="panel-head"><h2>Operational Mix</h2><span class="muted">Current dashboard sample</span></div>
+        <div class="stat-body">
+          ${renderDistribution("Task status", taskStatusDistribution(activeTasks, completedTasks, failedTasks), "No task status data yet.")}
+          ${renderDistribution("Agent workload", agentWorkloadDistribution(agents), "No agent workload data yet.")}
+          ${renderDistribution("Activity types", countByField(activities, "type"), "No activity data yet.")}
+          ${renderDistribution("Project signal", projectSignalDistribution(tasks, activities), "No project signal data yet.")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderInsightMetric(
+  label: string,
+  value: string,
+  detail: string,
+  tone = "",
+): string {
+  const toneClass = tone ? ` ${tone}` : "";
+  return `
+    <div class="stat-tile${toneClass}">
+      <div class="k">${escapeHtml(label)}</div>
+      <strong>${escapeHtml(value)}</strong>
+      <span>${escapeHtml(detail)}</span>
+    </div>
+  `;
+}
+
+function renderMeter(
+  label: string,
+  ratio: number,
+  detail: string,
+  tone = "",
+): string {
+  const value = clampRatio(ratio);
+  const toneClass = tone ? ` ${tone}` : "";
+  return `
+    <div class="meter-row">
+      <div class="meter-label"><span>${escapeHtml(label)}</span><span>${escapeHtml(formatPercent(value))}</span></div>
+      <div class="meter" title="${escapeHtml(detail)}"><div class="meter-fill${toneClass}" style="--value:${Math.round(value * 100)}%"></div></div>
+      <div class="muted">${escapeHtml(detail)}</div>
+    </div>
+  `;
+}
+
+function renderDistribution(
+  title: string,
+  items: DashboardDistributionItem[],
+  emptyText: string,
+): string {
+  const rows = renderDistributionRows(items, emptyText);
+  return `
+    <div>
+      <div class="trend-title"><span>${escapeHtml(title)}</span><span class="muted">${items.length} groups</span></div>
+      <div class="distribution">${rows}</div>
+    </div>
+  `;
+}
+
+function renderDistributionRows(
+  items: DashboardDistributionItem[],
+  emptyText: string,
+): string {
+  const visible = items.filter((item) => item.value > 0).slice(0, 8);
+  if (visible.length === 0) {
+    return `<div class="muted">${escapeHtml(emptyText)}</div>`;
+  }
+
+  const maxValue = Math.max(...visible.map((item) => item.value), 1);
+  return visible
+    .map((item) => {
+      const width = Math.max(4, Math.round((item.value / maxValue) * 100));
+      return `
+        <div class="dist-row" title="${escapeHtml(item.detail || item.label)}">
+          <div class="dist-label">${escapeHtml(item.label)}</div>
+          <div class="dist-bar"><div class="dist-fill" style="--value:${width}%"></div></div>
+          <div class="dist-value">${item.value}</div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function countByField(
+  records: JsonResult[],
+  fieldName: string,
+): DashboardDistributionItem[] {
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    const label = toText(record[fieldName]) || "unknown";
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return sortDistribution(
+    Array.from(counts, ([label, value]) => ({ label, value })),
+  );
+}
+
+function taskStatusDistribution(
+  active: number,
+  completed: number,
+  failed: number,
+): DashboardDistributionItem[] {
+  return sortDistribution([
+    { label: "active", value: active },
+    { label: "completed", value: completed },
+    { label: "failed", value: failed },
+  ]);
+}
+
+function agentWorkloadDistribution(
+  agents: JsonResult[],
+): DashboardDistributionItem[] {
+  return sortDistribution(
+    agents.map((agent) => {
+      const label = toText(agent.id) || "agent";
+      const active = toNumber(agent.activeTasks) ?? 0;
+      const completed = toNumber(agent.completedTasks) ?? 0;
+      const failed = toNumber(agent.failedTasks) ?? 0;
+      return {
+        label,
+        value: active + completed + failed,
+        detail: `${active} active, ${completed} done, ${failed} failed`,
+      };
+    }),
+  );
+}
+
+function projectSignalDistribution(
+  tasks: JsonResult[],
+  activities: JsonResult[],
+): DashboardDistributionItem[] {
+  const counts = new Map<string, number>();
+  for (const record of [...tasks, ...activities]) {
+    const project = toText(record.project) || "global";
+    counts.set(project, (counts.get(project) ?? 0) + 1);
+  }
+  return sortDistribution(
+    Array.from(counts, ([label, value]) => ({
+      label,
+      value,
+      detail: `${value} task or activity signals`,
+    })),
+  );
+}
+
+function sortDistribution(
+  items: DashboardDistributionItem[],
+): DashboardDistributionItem[] {
+  return items.sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+}
+
+function getAverageConfidence(memories: JsonResult[]): number {
+  if (memories.length === 0) {
+    return 0;
+  }
+  const total = memories.reduce(
+    (sum, memory) => sum + (toNumber(memory.confidence) ?? 0),
+    0,
+  );
+  return total / memories.length;
+}
+
+function toneForRatio(value: number, goodAt: number, warnBelow: number): string {
+  if (value >= goodAt) {
+    return "good";
+  }
+  if (value < warnBelow) {
+    return "bad";
+  }
+  return "warn";
+}
+
+function toneForCeiling(value: number, warnAt: number, badAt: number): string {
+  if (value >= badAt) {
+    return "bad";
+  }
+  if (value >= warnAt) {
+    return "warn";
+  }
+  return "good";
+}
+
+function clampRatio(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(Math.max(value, 0), 1);
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(clampRatio(value) * 100)}%`;
 }
 
 function renderInspector(
@@ -2692,13 +3003,16 @@ function getQuickInputSidebarHtml(): string {
     <style>
       :root {
         color-scheme: dark;
-        --bg-0: #0f141b;
-        --bg-1: #17202b;
-        --line: #2b3a4c;
-        --fg-0: #edf3fb;
-        --fg-1: #a7b8cd;
-        --accent: #2ea36c;
-        --danger: #c74f3f;
+        --bg-0: oklch(0.16 0.014 246);
+        --bg-1: oklch(0.205 0.017 246);
+        --bg-2: oklch(0.245 0.02 246);
+        --line: oklch(0.37 0.026 246);
+        --line-soft: oklch(0.31 0.02 246);
+        --fg-0: oklch(0.94 0.008 246);
+        --fg-1: oklch(0.72 0.017 246);
+        --accent: oklch(0.72 0.14 155);
+        --accent-2: oklch(0.7 0.12 235);
+        --danger: oklch(0.68 0.16 35);
       }
 
       * {
@@ -2708,7 +3022,7 @@ function getQuickInputSidebarHtml(): string {
       body {
         margin: 0;
         padding: 10px;
-        font-family: "Segoe UI", "IBM Plex Sans", sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
         background: var(--bg-0);
         color: var(--fg-0);
       }
@@ -2728,8 +3042,8 @@ function getQuickInputSidebarHtml(): string {
 
       section {
         border: 1px solid var(--line);
-        background: linear-gradient(170deg, #17202b, #101721);
-        border-radius: 10px;
+        background: var(--bg-1);
+        border-radius: 8px;
         padding: 10px;
         margin-bottom: 10px;
       }
@@ -2754,13 +3068,13 @@ function getQuickInputSidebarHtml(): string {
       }
 
       .ok {
-        background: rgba(46, 163, 108, 0.2);
-        color: #81e0b5;
+        background: color-mix(in oklch, var(--accent), transparent 80%);
+        color: var(--accent);
       }
 
       .warn {
-        background: rgba(199, 79, 63, 0.2);
-        color: #ffb4a8;
+        background: color-mix(in oklch, var(--danger), transparent 82%);
+        color: oklch(0.82 0.12 35);
       }
 
       .actions {
@@ -2771,21 +3085,42 @@ function getQuickInputSidebarHtml(): string {
 
       button {
         border: 1px solid var(--line);
-        background: #14202b;
+        background: var(--bg-2);
         color: var(--fg-0);
         font-size: 12px;
-        border-radius: 8px;
-        padding: 6px 8px;
+        border-radius: 7px;
+        padding: 7px 8px;
         cursor: pointer;
+        font-family: inherit;
       }
 
       button:hover {
-        border-color: #3a5370;
+        border-color: var(--accent-2);
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible {
+        outline: 2px solid var(--accent-2);
+        outline-offset: 2px;
       }
 
       button.primary {
-        background: linear-gradient(180deg, #2d8f63, #236f4e);
-        border-color: #2d8f63;
+        background: color-mix(in oklch, var(--accent), var(--bg-2) 62%);
+        border-color: color-mix(in oklch, var(--accent), transparent 20%);
+      }
+
+      button.ghost {
+        background: transparent;
+      }
+
+      button.icon {
+        width: 28px;
+        height: 28px;
+        display: inline-grid;
+        place-items: center;
+        padding: 0;
       }
 
       input,
@@ -2793,17 +3128,40 @@ function getQuickInputSidebarHtml(): string {
       textarea {
         width: 100%;
         border: 1px solid var(--line);
-        background: #0f1722;
+        background: var(--bg-0);
         color: var(--fg-0);
         border-radius: 7px;
         padding: 6px 7px;
         font-size: 12px;
-        margin-bottom: 6px;
+        font-family: inherit;
       }
 
       textarea {
-        min-height: 56px;
+        min-height: 74px;
         resize: vertical;
+      }
+
+      label {
+        display: grid;
+        gap: 4px;
+        color: var(--fg-1);
+        font-size: 11px;
+      }
+
+      label span {
+        color: var(--fg-1);
+      }
+
+      .form-grid {
+        display: grid;
+        gap: 8px;
+      }
+
+      .form-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        margin-top: 10px;
       }
 
       .note {
@@ -2812,14 +3170,68 @@ function getQuickInputSidebarHtml(): string {
       }
 
       .error {
-        border: 1px solid rgba(199, 79, 63, 0.5);
-        background: rgba(199, 79, 63, 0.1);
-        color: #ffb4a8;
+        border: 1px solid color-mix(in oklch, var(--danger), transparent 35%);
+        background: color-mix(in oklch, var(--danger), transparent 88%);
+        color: oklch(0.82 0.12 35);
         border-radius: 8px;
         padding: 7px 8px;
         font-size: 12px;
         margin-bottom: 10px;
         display: none;
+      }
+
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        padding: 10px;
+        background: color-mix(in oklch, var(--bg-0), transparent 18%);
+        display: none;
+        align-items: flex-start;
+        justify-content: center;
+        overflow: auto;
+        z-index: 20;
+      }
+
+      .modal-backdrop.open {
+        display: flex;
+      }
+
+      .dialog {
+        width: min(100%, 360px);
+        margin: 6px auto 18px;
+        border: 1px solid var(--line);
+        background: var(--bg-1);
+        border-radius: 8px;
+        padding: 0;
+        box-shadow: 0 18px 48px color-mix(in oklch, var(--bg-0), transparent 20%);
+      }
+
+      .dialog[hidden] {
+        display: none;
+      }
+
+      .dialog-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: start;
+        padding: 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .dialog-head h3 {
+        margin: 0 0 3px;
+      }
+
+      .dialog-head p {
+        margin: 0;
+        color: var(--fg-1);
+        font-size: 11px;
+        line-height: 1.35;
+      }
+
+      .dialog-body {
+        padding: 10px;
       }
     </style>
   </head>
@@ -2834,48 +3246,73 @@ function getQuickInputSidebarHtml(): string {
       <div class="row"><span class="k">DB</span><span id="statusDb">n/a</span></div>
       <div class="row"><span class="k">Updated</span><span id="statusUpdated">n/a</span></div>
       <div class="actions">
-        <button data-action="refresh-status">Refresh</button>
+        <button class="primary" data-open-modal="observation">Add Memory</button>
+        <button data-open-modal="summary">Save Summary</button>
         <button data-action="open-dashboard">Dashboard</button>
-        <button class="primary" data-action="setup">Setup</button>
         <button data-action="doctor">Doctor</button>
         <button data-action="sync-tasks">Sync Tasks</button>
-        <button data-action="open-settings">Settings</button>
+        <button data-action="refresh-status">Refresh</button>
       </div>
-      <div class="note" style="margin-top:8px;">Use Setup after first install.</div>
+      <div class="note" style="margin-top:8px;">Setup and path settings stay in the Command Palette, keeping this view focused on daily capture.</div>
     </section>
 
-    <section>
-      <h3>Add Observation</h3>
-      <input id="obsProject" type="text" placeholder="Project (optional)" />
-      <select id="obsType">
-        <option value="note">note</option>
-        <option value="bugfix">bugfix</option>
-        <option value="feature">feature</option>
-        <option value="refactor">refactor</option>
-        <option value="discovery">discovery</option>
-        <option value="decision">decision</option>
-        <option value="change">change</option>
-      </select>
-      <input id="obsTitle" type="text" placeholder="Title (required)" />
-      <textarea id="obsContent" placeholder="Content (required)"></textarea>
-      <input id="obsTags" type="text" placeholder="Tags (comma-separated)" />
-      <input id="obsFiles" type="text" placeholder="Files (comma-separated)" />
-      <button class="primary" id="submitObservation">Save Observation</button>
-    </section>
+    <div id="modalBackdrop" class="modal-backdrop" aria-hidden="true" data-close-modal>
+      <section id="observationDialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="observationTitle" hidden>
+        <div class="dialog-head">
+          <div>
+            <h3 id="observationTitle">Add Memory</h3>
+            <p>Capture a compact observation, decision, feature note, or file-linked finding.</p>
+          </div>
+          <button class="icon ghost" type="button" title="Close" aria-label="Close" data-close-modal>&times;</button>
+        </div>
+        <div class="dialog-body">
+          <div class="form-grid">
+            <label><span>Project</span><input id="obsProject" type="text" placeholder="Optional" /></label>
+            <label><span>Type</span><select id="obsType">
+              <option value="note">note</option>
+              <option value="bugfix">bugfix</option>
+              <option value="feature">feature</option>
+              <option value="refactor">refactor</option>
+              <option value="discovery">discovery</option>
+              <option value="decision">decision</option>
+              <option value="change">change</option>
+            </select></label>
+            <label><span>Title</span><input id="obsTitle" type="text" placeholder="Required" /></label>
+            <label><span>Content</span><textarea id="obsContent" placeholder="Required"></textarea></label>
+            <label><span>Tags</span><input id="obsTags" type="text" placeholder="Comma-separated" /></label>
+            <label><span>Files</span><input id="obsFiles" type="text" placeholder="Comma-separated" /></label>
+          </div>
+          <div class="form-actions">
+            <button class="ghost" type="button" data-close-modal>Cancel</button>
+            <button class="primary" type="button" id="submitObservation">Save Memory</button>
+          </div>
+        </div>
+      </section>
 
-    <section>
-      <h3>Add Summary</h3>
-      <input id="sumProject" type="text" placeholder="Project (optional)" />
-      <textarea id="sumLearned" placeholder="Learned (required)"></textarea>
-      <textarea id="sumRequest" placeholder="Request (optional)"></textarea>
-      <textarea id="sumCompleted" placeholder="Completed (optional)"></textarea>
-      <textarea id="sumNextSteps" placeholder="Next steps (optional)"></textarea>
-      <input id="sumTags" type="text" placeholder="Tags (comma-separated)" />
-      <button class="primary" id="submitSummary">Save Summary</button>
-      <div class="note" style="margin-top:8px;">
-        Need CLI path settings? Use command palette: Retentia: Open Settings.
-      </div>
-    </section>
+      <section id="summaryDialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="summaryTitle" hidden>
+        <div class="dialog-head">
+          <div>
+            <h3 id="summaryTitle">Save Summary</h3>
+            <p>Store the durable handoff that should survive the current chat context.</p>
+          </div>
+          <button class="icon ghost" type="button" title="Close" aria-label="Close" data-close-modal>&times;</button>
+        </div>
+        <div class="dialog-body">
+          <div class="form-grid">
+            <label><span>Project</span><input id="sumProject" type="text" placeholder="Optional" /></label>
+            <label><span>Learned</span><textarea id="sumLearned" placeholder="Required"></textarea></label>
+            <label><span>Request</span><textarea id="sumRequest" placeholder="Optional"></textarea></label>
+            <label><span>Completed</span><textarea id="sumCompleted" placeholder="Optional"></textarea></label>
+            <label><span>Next steps</span><textarea id="sumNextSteps" placeholder="Optional"></textarea></label>
+            <label><span>Tags</span><input id="sumTags" type="text" placeholder="Comma-separated" /></label>
+          </div>
+          <div class="form-actions">
+            <button class="ghost" type="button" data-close-modal>Cancel</button>
+            <button class="primary" type="button" id="submitSummary">Save Summary</button>
+          </div>
+        </div>
+      </section>
+    </div>
 
     <script nonce="${nonce}">
       const vscode = acquireVsCodeApi();
@@ -2886,6 +3323,9 @@ function getQuickInputSidebarHtml(): string {
       const statusDb = document.getElementById("statusDb");
       const statusUpdated = document.getElementById("statusUpdated");
       const errorNode = document.getElementById("error");
+      const modalBackdrop = document.getElementById("modalBackdrop");
+      const observationDialog = document.getElementById("observationDialog");
+      const summaryDialog = document.getElementById("summaryDialog");
 
       function post(command, payload = {}) {
         vscode.postMessage({ command, payload });
@@ -2908,12 +3348,53 @@ function getQuickInputSidebarHtml(): string {
         return date.toLocaleString();
       }
 
+      function openDialog(kind) {
+        showError("");
+        const isSummary = kind === "summary";
+        observationDialog.hidden = isSummary;
+        summaryDialog.hidden = !isSummary;
+        modalBackdrop.classList.add("open");
+        modalBackdrop.setAttribute("aria-hidden", "false");
+        const focusTarget = document.getElementById(isSummary ? "sumLearned" : "obsTitle");
+        if (focusTarget) {
+          focusTarget.focus();
+        }
+      }
+
+      function closeDialog() {
+        modalBackdrop.classList.remove("open");
+        modalBackdrop.setAttribute("aria-hidden", "true");
+        observationDialog.hidden = true;
+        summaryDialog.hidden = true;
+      }
+
       for (const button of document.querySelectorAll("button[data-action]")) {
         button.addEventListener("click", () => {
           showError("");
           post(button.getAttribute("data-action") || "");
         });
       }
+
+      for (const button of document.querySelectorAll("button[data-open-modal]")) {
+        button.addEventListener("click", () => {
+          openDialog(button.getAttribute("data-open-modal") || "observation");
+        });
+      }
+
+      for (const node of document.querySelectorAll("[data-close-modal]")) {
+        node.addEventListener("click", (event) => {
+          const target = event.target;
+          if (target instanceof HTMLElement && target.hasAttribute("data-close-modal")) {
+            closeDialog();
+          }
+        });
+      }
+
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          closeDialog();
+        }
+      });
 
       document.getElementById("submitObservation").addEventListener("click", () => {
         showError("");
@@ -2959,6 +3440,7 @@ function getQuickInputSidebarHtml(): string {
           document.getElementById("obsContent").value = "";
           document.getElementById("obsTags").value = "";
           document.getElementById("obsFiles").value = "";
+          closeDialog();
           return;
         }
 
@@ -2968,6 +3450,7 @@ function getQuickInputSidebarHtml(): string {
           document.getElementById("sumCompleted").value = "";
           document.getElementById("sumNextSteps").value = "";
           document.getElementById("sumTags").value = "";
+          closeDialog();
           return;
         }
 

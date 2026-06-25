@@ -49,6 +49,8 @@ const V2_TOP_LEVEL_ACTIONS = new Set([
   "mcp-config",
   "event",
   "memory",
+  "evidence",
+  "evidence-search",
   "search",
   "context",
   "edge",
@@ -232,6 +234,40 @@ async function handleV2Command(
           pinned: Boolean(parsed.options.pinned),
         });
         printJson(saved);
+        return;
+      }
+
+      case "evidence": {
+        const saved = engine.addEvidence({
+          sourceType: getRequiredString(
+            parsed.options["source-type"],
+            "--source-type",
+          ),
+          sourceId: getRequiredString(
+            parsed.options["source-id"],
+            "--source-id",
+          ),
+          content: getRequiredString(parsed.options.content, "--content"),
+          project: getOptionalString(parsed.options.project),
+          uri: getOptionalString(parsed.options.uri),
+          offsetStart: getOptionalNumber(parsed.options["offset-start"]),
+          offsetEnd: getOptionalNumber(parsed.options["offset-end"]),
+          metadata: parseJsonOption(parsed.options.metadata),
+          redact: parsed.options["no-redact"] ? false : true,
+        });
+        printJson(saved);
+        return;
+      }
+
+      case "evidence-search": {
+        const results = engine.searchEvidence({
+          query: getOptionalString(parsed.options.query),
+          project: getOptionalString(parsed.options.project),
+          sourceType: getOptionalString(parsed.options["source-type"]),
+          sourceId: getOptionalString(parsed.options["source-id"]),
+          limit: getOptionalNumber(parsed.options.limit),
+        });
+        printJson({ total: results.length, results });
         return;
       }
 
@@ -669,6 +705,8 @@ function printV2Help(): void {
     `  ${APP_NAME} v2 migrate [--from-data-file <old-retentia.db>] [--data-file <new-retentia-v2.db>]`,
     `  ${APP_NAME} v2 event --type <type> --source <source> [--actor <id>] [--task-id <id>] [--summary <text>]`,
     `  ${APP_NAME} v2 memory --kind <kind> --title <text> --body <text> [--tags <a,b>] [--pinned]`,
+    `  ${APP_NAME} v2 evidence --source-type <type> --source-id <id> --content <text> [--uri <path>]`,
+    `  ${APP_NAME} v2 evidence-search [--query <text>] [--source-type <type>] [--source-id <id>]`,
     `  ${APP_NAME} v2 search [--query <text>] [--project <name>] [--kind <kind>] [--tags <a,b>]`,
     `  ${APP_NAME} v2 context [--query <text>] [--mode ids|brief|task-primer|full-evidence] [--max-chars <n>]`,
     `  ${APP_NAME} v2 edge --from-type <type> --from-id <id> --to-type <type> --to-id <id> --relation <name>`,
@@ -1177,6 +1215,8 @@ function printHelp(): void {
     `  ${APP_NAME} migrate [--from-data-file <old-retentia.db>] [--data-file <new-retentia-v2.db>]`,
     `  ${APP_NAME} event --type <type> --source <codex|claude-code> [--summary <text>]`,
     `  ${APP_NAME} memory --kind <kind> --title <text> --body <text> [--tags <a,b>]`,
+    `  ${APP_NAME} evidence --source-type <type> --source-id <id> --content <text> [--uri <path>]`,
+    `  ${APP_NAME} evidence-search [--query <text>] [--source-type <type>] [--source-id <id>]`,
     `  ${APP_NAME} search [--query <text>] [--project <name>] [--kind <kind>]`,
     `  ${APP_NAME} context [--query <text>] [--mode ids|brief|task-primer|full-evidence] [--max-chars <n>]`,
     `  ${APP_NAME} edge --from-type <type> --from-id <id> --to-type <type> --to-id <id> --relation <name>`,

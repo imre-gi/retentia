@@ -106,6 +106,41 @@ export async function startV2McpServer(
         },
       },
       {
+        name: "evidence_add",
+        description:
+          "Add an immutable evidence chunk linked to an event, memory, task, artifact, or other source. Content is redacted by default.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sourceType: { type: "string" },
+            sourceId: { type: "string" },
+            content: { type: "string" },
+            project: { type: "string" },
+            uri: { type: "string" },
+            offsetStart: { type: "number" },
+            offsetEnd: { type: "number" },
+            metadata: { type: "object" },
+            redact: { type: "boolean" },
+          },
+          required: ["sourceType", "sourceId", "content"],
+        },
+      },
+      {
+        name: "evidence_search",
+        description:
+          "Search immutable evidence chunks with FTS and source/project filters.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+            project: { type: "string" },
+            sourceType: { type: "string" },
+            sourceId: { type: "string" },
+            limit: { type: "number" },
+          },
+        },
+      },
+      {
         name: "memory_context",
         description:
           "Build a hard-budgeted context pack. Use brief or ids by default; full-evidence is opt-in.",
@@ -235,6 +270,32 @@ async function handleToolCall(
             project: getString(args, "project", false) || undefined,
             kind: getOptionalMemoryKind(args),
             tags: getStringArray(args, "tags"),
+            limit: getNumber(args, "limit"),
+          }),
+        );
+
+      case "evidence_add":
+        return textResult(
+          engine.addEvidence({
+            sourceType: getString(args, "sourceType", true),
+            sourceId: getString(args, "sourceId", true),
+            content: getString(args, "content", true),
+            project: getString(args, "project", false) || undefined,
+            uri: getString(args, "uri", false) || undefined,
+            offsetStart: getNumber(args, "offsetStart"),
+            offsetEnd: getNumber(args, "offsetEnd"),
+            metadata: args.metadata,
+            redact: getBoolean(args, "redact"),
+          }),
+        );
+
+      case "evidence_search":
+        return textResult(
+          engine.searchEvidence({
+            query: getString(args, "query", false) || undefined,
+            project: getString(args, "project", false) || undefined,
+            sourceType: getString(args, "sourceType", false) || undefined,
+            sourceId: getString(args, "sourceId", false) || undefined,
             limit: getNumber(args, "limit"),
           }),
         );

@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
 import type {
@@ -12,6 +13,10 @@ import type {
   V2DashboardTrends,
   V2Event,
   V2EventInput,
+  V2EvidenceChunk,
+  V2EvidenceInput,
+  V2EvidenceSearchOptions,
+  V2EvidenceSearchResult,
   V2ImportedEventResult,
   V2GraphEdge,
   V2GraphEdgeInput,
@@ -55,6 +60,25 @@ interface MemoryRow {
 }
 
 interface SearchRow extends MemoryRow {
+  score: number | null;
+}
+
+interface EvidenceRow {
+  id: number;
+  created_at: string;
+  source_type: string;
+  source_id: string;
+  project: string;
+  uri: string | null;
+  offset_start: number | null;
+  offset_end: number | null;
+  content: string;
+  content_hash: string;
+  redacted: number;
+  metadata_json: string | null;
+}
+
+interface EvidenceSearchRow extends EvidenceRow {
   score: number | null;
 }
 
@@ -199,6 +223,55 @@ export class V2MemoryEngine {
     return this.getMemory(Number(info.lastInsertRowid));
   }
 
+  addEvidence(input: V2EvidenceInput): V2EvidenceChunk {
+    const createdAt = input.createdAt || new Date().toISOString();
+    const redaction = input.redact === false
+      ? { content: cleanRequired(input.content, ""), redacted: false }
+      : redactSensitiveText(cleanRequired(input.content, ""));
+    const contentHash = createHash("sha256")
+      .update(redaction.content)
+      .digest("hex");
+    const sourceType = cleanRequired(input.sourceType, "source");
+    const sourceId = cleanRequired(input.sourceId, "unknown");
+    const info = this.db
+      .prepare(
+        `INSERT INTO evidence_chunks (
+          created_at, source_type, source_id, project, uri, offset_start,
+          offset_end, content, content_hash, redacted, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        createdAt,
+        sourceType,
+        sourceId,
+        cleanOptional(input.project) || DEFAULT_PROJECT,
+        cleanOptional(input.uri),
+        normalizeOffset(input.offsetStart),
+        normalizeOffset(input.offsetEnd),
+        redaction.content,
+        contentHash,
+        redaction.redacted ? 1 : 0,
+        input.metadata === undefined ? null : toJson(input.metadata),
+      );
+
+    const evidence = this.getEvidence(Number(info.lastInsertRowid));
+    this.addEdge({
+      fromType: sourceType,
+      fromId: sourceId,
+      toType: "evidence",
+      toId: String(evidence.id),
+      relation: "has_evidence",
+      weight: 1,
+      metadata: {
+        uri: evidence.uri,
+        contentHash: evidence.contentHash,
+        redacted: evidence.redacted,
+      },
+      createdAt,
+    });
+    return evidence;
+  }
+
   addEdge(input: V2GraphEdgeInput): V2GraphEdge {
     const info = this.db
       .prepare(
@@ -268,6 +341,72 @@ export class V2MemoryEngine {
           .all(...params, limit) as SearchRow[]);
 
     return rows.map((row) => mapSearchResult(row, options.query));
+  }
+
+  searchEvidence(
+    options: V2EvidenceSearchOptions = {},
+  ): V2EvidenceSearchResult[] {
+    const limit = clampInteger(options.limit ?? 10, 1, 50);
+    const params: Array<string | number> = [];
+    const filters: string[] = [];
+
+    if (options.project?.trim()) {
+      filters.push("e.project = ?");
+      params.push(options.project.trim());
+    }
+    if (options.sourceType?.trim()) {
+      filters.push("e.source_type = ?");
+      params.push(options.sourceType.trim());
+    }
+    if (options.sourceId?.trim()) {
+      filters.push("e.source_id = ?");
+      params.push(options.sourceId.trim());
+    }
+
+    const matchQuery = buildFtsQuery(options.query);
+    const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+    const rows = matchQuery
+      ? (this.db
+          .prepare(
+            `SELECT e.*, bm25(evidence_fts) AS score
+             FROM evidence_fts
+             JOIN evidence_chunks e ON e.id = evidence_fts.rowid
+             ${where ? `${where} AND` : "WHERE"} evidence_fts MATCH ?
+             ORDER BY score ASC, e.created_at DESC
+             LIMIT ?`,
+          )
+          .all(...params, matchQuery, limit) as EvidenceSearchRow[])
+      : (this.db
+          .prepare(
+            `SELECT e.*, NULL AS score
+             FROM evidence_chunks e
+             ${where}
+             ORDER BY e.created_at DESC, e.id DESC
+             LIMIT ?`,
+          )
+          .all(...params, limit) as EvidenceSearchRow[]);
+
+    return rows.map((row) => mapEvidenceSearchResult(row, options.query));
+  }
+
+  listEvidenceForSource(
+    sourceType: string,
+    sourceId: string,
+    limit = 20,
+  ): V2EvidenceChunk[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM evidence_chunks
+         WHERE source_type = ? AND source_id = ?
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?`,
+      )
+      .all(
+        cleanRequired(sourceType, "source"),
+        cleanRequired(sourceId, "unknown"),
+        clampInteger(limit, 1, 100),
+      ) as EvidenceRow[];
+    return rows.map(mapEvidence);
   }
 
   buildContext(options: V2ContextOptions = {}): V2ContextPack {
@@ -362,6 +501,7 @@ export class V2MemoryEngine {
         events: countRows(this.db, "events"),
         memories: countRows(this.db, "memories"),
         graphEdges: countRows(this.db, "graph_edges"),
+        evidenceChunks: countRows(this.db, "evidence_chunks"),
         agents: agents.length,
         tasks: tasks.length,
         projects: projects.size,
@@ -425,6 +565,8 @@ export class V2MemoryEngine {
       "memories",
       "memory_fts",
       "graph_edges",
+      "evidence_chunks",
+      "evidence_fts",
     ];
     const missingTables = requiredTables.filter((table) => !this.tableExists(table));
     pushCheck(
@@ -509,6 +651,7 @@ export class V2MemoryEngine {
       memories: safeCountRows(this.db, "memories"),
       graphEdges: safeCountRows(this.db, "graph_edges"),
       imports: safeCountRows(this.db, "event_imports"),
+      evidenceChunks: safeCountRows(this.db, "evidence_chunks"),
     };
     pushCheck("counts", "pass", "Core table counts collected.", totals);
 
@@ -597,6 +740,43 @@ export class V2MemoryEngine {
         VALUES (new.id, new.title, new.body, new.tags_json);
       END;
 
+      CREATE TABLE IF NOT EXISTS evidence_chunks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        project TEXT NOT NULL,
+        uri TEXT,
+        offset_start INTEGER,
+        offset_end INTEGER,
+        content TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        redacted INTEGER NOT NULL DEFAULT 0,
+        metadata_json TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_evidence_source ON evidence_chunks(source_type, source_id);
+      CREATE INDEX IF NOT EXISTS idx_evidence_project_time ON evidence_chunks(project, created_at);
+      CREATE INDEX IF NOT EXISTS idx_evidence_hash ON evidence_chunks(content_hash);
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS evidence_fts USING fts5(
+        content,
+        uri,
+        metadata_json,
+        content='evidence_chunks',
+        content_rowid='id'
+      );
+
+      CREATE TRIGGER IF NOT EXISTS evidence_chunks_ai AFTER INSERT ON evidence_chunks BEGIN
+        INSERT INTO evidence_fts(rowid, content, uri, metadata_json)
+        VALUES (new.id, new.content, new.uri, new.metadata_json);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS evidence_chunks_ad AFTER DELETE ON evidence_chunks BEGIN
+        INSERT INTO evidence_fts(evidence_fts, rowid, content, uri, metadata_json)
+        VALUES ('delete', old.id, old.content, old.uri, old.metadata_json);
+      END;
+
       CREATE TABLE IF NOT EXISTS graph_edges (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         created_at TEXT NOT NULL,
@@ -627,6 +807,13 @@ export class V2MemoryEngine {
       .prepare("SELECT * FROM memories WHERE id = ?")
       .get(id) as MemoryRow;
     return mapMemory(row);
+  }
+
+  private getEvidence(id: number): V2EvidenceChunk {
+    const row = this.db
+      .prepare("SELECT * FROM evidence_chunks WHERE id = ?")
+      .get(id) as EvidenceRow;
+    return mapEvidence(row);
   }
 
   private tableExists(name: string): boolean {
@@ -1042,6 +1229,38 @@ function mapMemory(row: MemoryRow): V2Memory {
   };
 }
 
+function mapEvidence(row: EvidenceRow): V2EvidenceChunk {
+  return {
+    id: row.id,
+    createdAt: row.created_at,
+    sourceType: row.source_type,
+    sourceId: row.source_id,
+    project: row.project,
+    uri: row.uri || "",
+    offsetStart: row.offset_start ?? 0,
+    offsetEnd: row.offset_end ?? 0,
+    content: row.content,
+    contentHash: row.content_hash,
+    redacted: row.redacted === 1,
+    metadata: row.metadata_json ? JSON.parse(row.metadata_json) : undefined,
+  };
+}
+
+function mapEvidenceSearchResult(
+  row: EvidenceSearchRow,
+  query?: string,
+): V2EvidenceSearchResult {
+  const evidence = mapEvidence(row);
+  return {
+    ...evidence,
+    snippet: buildSnippet(row.content, query),
+    score:
+      row.score === null
+        ? 0
+        : Math.max(0, 100 - Math.abs(row.score)),
+  };
+}
+
 function mapSearchResult(row: SearchRow, query?: string): V2SearchResult {
   const tags = parseStringArray(row.tags_json);
   return {
@@ -1209,6 +1428,31 @@ function tokenize(value?: string): string[] {
 function cleanRequired(value: string | undefined, fallback: string): string {
   const cleaned = value?.trim();
   return cleaned || fallback;
+}
+
+function normalizeOffset(value: number | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return Math.max(0, Math.floor(value));
+}
+
+function redactSensitiveText(value: string): { content: string; redacted: boolean } {
+  const replacements: Array<[RegExp, string]> = [
+    [/(Authorization:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[REDACTED_TOKEN]"],
+    [
+      /\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*["']?[^"'\s,;]+/gi,
+      "$1=[REDACTED_SECRET]",
+    ],
+    [/\bsk-[A-Za-z0-9_-]{16,}\b/g, "[REDACTED_OPENAI_KEY]"],
+    [/\b[A-Za-z0-9_=-]{32,}\.[A-Za-z0-9_=-]{10,}\.[A-Za-z0-9_=-]{10,}\b/g, "[REDACTED_JWT]"],
+    [/(https?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, "$1[REDACTED_CREDENTIALS]@"],
+  ];
+  let content = value;
+  for (const [pattern, replacement] of replacements) {
+    content = content.replace(pattern, replacement);
+  }
+  return { content, redacted: content !== value };
 }
 
 function cleanOptional(value?: string): string | null {

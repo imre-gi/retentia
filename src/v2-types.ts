@@ -76,6 +76,47 @@ export interface V2Memory {
   updatedAt: string;
 }
 
+export interface V2EvidenceInput {
+  sourceType: string;
+  sourceId: string;
+  content: string;
+  project?: string;
+  uri?: string;
+  offsetStart?: number;
+  offsetEnd?: number;
+  metadata?: unknown;
+  redact?: boolean;
+  createdAt?: string;
+}
+
+export interface V2EvidenceChunk {
+  id: number;
+  createdAt: string;
+  sourceType: string;
+  sourceId: string;
+  project: string;
+  uri: string;
+  offsetStart: number;
+  offsetEnd: number;
+  content: string;
+  contentHash: string;
+  redacted: boolean;
+  metadata?: unknown;
+}
+
+export interface V2EvidenceSearchOptions {
+  query?: string;
+  project?: string;
+  sourceType?: string;
+  sourceId?: string;
+  limit?: number;
+}
+
+export interface V2EvidenceSearchResult extends V2EvidenceChunk {
+  snippet: string;
+  score: number;
+}
+
 export interface V2GraphEdgeInput {
   fromType: string;
   fromId: string;
@@ -148,6 +189,7 @@ export interface V2HealthReport {
     memories: number;
     graphEdges: number;
     imports: number;
+    evidenceChunks: number;
   };
 }
 
@@ -214,8 +256,9 @@ export interface V2DashboardData {
   totals: {
     events: number;
     memories: number;
-    graphEdges: number;
-    agents: number;
+      graphEdges: number;
+      evidenceChunks: number;
+      agents: number;
     tasks: number;
     projects: number;
   };

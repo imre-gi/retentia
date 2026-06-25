@@ -86,6 +86,38 @@ describe("V2MemoryEngine", () => {
     });
   });
 
+  test("stores redacted evidence chunks and searches them", () => {
+    withEngine((engine) => {
+      const evidence = engine.addEvidence({
+        sourceType: "memory",
+        sourceId: "42",
+        project: "retentia",
+        uri: "session.jsonl",
+        offsetStart: 12,
+        offsetEnd: 90,
+        content:
+          "The callback failed with api_key=secret123 and Authorization: Bearer abc.def.ghi while processing evidence.",
+        metadata: { line: 7 },
+      });
+
+      const results = engine.searchEvidence({
+        query: "callback evidence",
+        sourceType: "memory",
+        sourceId: "42",
+      });
+      const edges = engine.listEdgesForNode("memory", "42");
+
+      expect(evidence.redacted).toBe(true);
+      expect(evidence.content).toContain("[REDACTED_SECRET]");
+      expect(evidence.content).toContain("[REDACTED_TOKEN]");
+      expect(results).toHaveLength(1);
+      expect(results[0]?.snippet).toContain("callback");
+      expect(edges.some((edge) => edge.toId === String(evidence.id))).toBe(
+        true,
+      );
+    });
+  });
+
   test("builds budgeted context packs", () => {
     withEngine((engine) => {
       engine.addMemory({

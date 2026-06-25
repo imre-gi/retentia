@@ -1,6 +1,6 @@
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import Database from "better-sqlite3";
 import type {
   AddObservationInput,
@@ -20,9 +20,7 @@ import type {
 } from "./types.js";
 
 const PRIMARY_DATA_DIR = join(homedir(), ".retentia");
-const LEGACY_DATA_DIR = join(homedir(), ".codex-mem");
 const PRIMARY_DB_FILE = join(PRIMARY_DATA_DIR, "retentia.db");
-const LEGACY_DB_FILE = join(LEGACY_DATA_DIR, "codex-mem.db");
 const MAX_SEARCH_LIMIT = 100;
 const MAX_LIST_LIMIT = 2000;
 
@@ -65,18 +63,6 @@ interface IoTraceRow {
   res: string;
 }
 
-function resolveDefaultDbFile(): string {
-  if (existsSync(PRIMARY_DB_FILE)) {
-    return PRIMARY_DB_FILE;
-  }
-
-  if (existsSync(LEGACY_DB_FILE)) {
-    return LEGACY_DB_FILE;
-  }
-
-  return PRIMARY_DB_FILE;
-}
-
 export class MemoryStore {
   private readonly dbFile: string;
   private readonly cwd: string;
@@ -86,9 +72,8 @@ export class MemoryStore {
     this.dbFile =
       dbFile ||
       process.env.RETENTIA_DB_FILE ||
-      process.env.CODEX_MEM_DB_FILE ||
-      process.env.CODEX_MEM_DATA_FILE ||
-      resolveDefaultDbFile();
+      process.env.RETENTIA_DATA_FILE ||
+      PRIMARY_DB_FILE;
     this.cwd = cwd || process.cwd();
 
     mkdirSync(dirname(this.dbFile), { recursive: true });

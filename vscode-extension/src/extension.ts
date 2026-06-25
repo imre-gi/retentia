@@ -47,6 +47,14 @@ interface DashboardIoTraceEvent {
   res: string;
 }
 
+interface DashboardTrendBucket {
+  key: string;
+  count: number;
+  completed: number;
+  failed: number;
+  delta: number;
+}
+
 interface LiveAgentSnapshot {
   id: string;
   nickname: string;
@@ -113,6 +121,10 @@ interface DashboardData {
     agents: Array<{ key: string; count: number }>;
     models: Array<{ key: string; count: number }>;
     statuses: Array<{ key: string; count: number }>;
+    trends: {
+      daily: DashboardTrendBucket[];
+      weekly: DashboardTrendBucket[];
+    };
     tasks: Array<{
       id: number;
       kind: string;
@@ -172,11 +184,11 @@ interface TaskSyncMetrics {
 }
 
 const OUTPUT = vscode.window.createOutputChannel("Retentia");
-const DASHBOARD_VIEW_TYPE = "codexMem.statusDashboard.view";
-const QUICK_INPUT_VIEW_TYPE = "codexMem.quickInput";
+const DASHBOARD_VIEW_TYPE = "retentia.statusDashboard.view";
+const QUICK_INPUT_VIEW_TYPE = "retentia.quickInput";
 const DASHBOARD_TITLE = "Retentia Dashboard";
 const INITIALIZED_DASHBOARD_PANELS = new WeakSet<vscode.WebviewPanel>();
-const MCP_SERVER_SECTIONS = ["mcp_servers.retentia", "mcp_servers.codex-mem"];
+const MCP_SERVER_SECTIONS = ["mcp_servers.retentia"];
 const CODEX_CONFIG_PATH = join(homedir(), ".codex", "config.toml");
 const DEFAULT_AUTO_SYNC_LOOKBACK_DAYS = 7;
 const DEFAULT_AUTO_SYNC_MAX_IMPORT = 25;
@@ -208,7 +220,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.setup", async () => {
+    vscode.commands.registerCommand("retentia.setup", async () => {
       await runAndShowJson(
         ["install", "--client", "codex"],
         "Retentia setup complete. MCP is available for Codex.",
@@ -218,7 +230,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.enableMcp", async () => {
+    vscode.commands.registerCommand("retentia.enableMcp", async () => {
       await runAndShowJson(
         ["install", "--client", "codex"],
         "Retentia MCP registration completed.",
@@ -227,14 +239,14 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.initStore", async () => {
+    vscode.commands.registerCommand("retentia.initStore", async () => {
       await runAndShowJson(["init"], "retentia store initialized");
       await sidebarProvider.refreshStatus();
     }),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.syncCodexTasks", async () => {
+    vscode.commands.registerCommand("retentia.syncTasks", async () => {
       const metrics = await syncTaskExecutions({ force: true });
       OUTPUT.appendLine(`Task sync metrics: ${JSON.stringify(metrics)}`);
       vscode.window.showInformationMessage(
@@ -245,13 +257,13 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.projectExplorer", async () => {
-      await vscode.commands.executeCommand("codexMem.statusDashboard");
+    vscode.commands.registerCommand("retentia.projectExplorer", async () => {
+      await vscode.commands.executeCommand("retentia.statusDashboard");
     }),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.statusDashboard", async () => {
+    vscode.commands.registerCommand("retentia.statusDashboard", async () => {
       if (!dashboardPanel) {
         dashboardPanel = vscode.window.createWebviewPanel(
           DASHBOARD_VIEW_TYPE,
@@ -315,16 +327,16 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.openSettings", async () => {
+    vscode.commands.registerCommand("retentia.openSettings", async () => {
       await vscode.commands.executeCommand(
         "workbench.action.openSettings",
-        `@ext:${context.extension.id} codexMem`,
+        `@ext:${context.extension.id} retentia`,
       );
     }),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.addObservation", async () => {
+    vscode.commands.registerCommand("retentia.addObservation", async () => {
       const title = await vscode.window.showInputBox({
         title: "Retentia: Observation Title",
         prompt: "Short title",
@@ -396,7 +408,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.addSummary", async () => {
+    vscode.commands.registerCommand("retentia.addSummary", async () => {
       const learned = await vscode.window.showInputBox({
         title: "Retentia: Learned",
         prompt: "What was learned",
@@ -442,7 +454,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.search", async () => {
+    vscode.commands.registerCommand("retentia.search", async () => {
       const query = await vscode.window.showInputBox({
         title: "Retentia: Search",
         prompt: "Search query",
@@ -506,7 +518,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.contextPack", async () => {
+    vscode.commands.registerCommand("retentia.contextPack", async () => {
       const query = await vscode.window.showInputBox({
         title: "Retentia: Context Pack Query",
         prompt: "Optional query",
@@ -532,7 +544,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.openMemoryFile", async () => {
+    vscode.commands.registerCommand("retentia.openMemoryFile", async () => {
       const init = await runCliJson(["init"]);
       const dataFile = String(init.dataFile ?? "");
       if (!dataFile) {
@@ -613,12 +625,12 @@ class QuickInputSidebarProvider implements vscode.WebviewViewProvider {
       }
 
       if (command === "open-dashboard") {
-        await vscode.commands.executeCommand("codexMem.statusDashboard");
+        await vscode.commands.executeCommand("retentia.statusDashboard");
         return;
       }
 
       if (command === "open-settings") {
-        await vscode.commands.executeCommand("codexMem.openSettings");
+        await vscode.commands.executeCommand("retentia.openSettings");
         return;
       }
 
@@ -710,7 +722,7 @@ class QuickInputSidebarProvider implements vscode.WebviewViewProvider {
 
 function getDefaultProject(): string | undefined {
   const explicit = vscode.workspace
-    .getConfiguration("codexMem")
+    .getConfiguration("retentia")
     .get<string>("defaultProject", "")
     .trim();
 
@@ -860,9 +872,9 @@ async function runCliRaw(args: string[]): Promise<string> {
     child.on("error", (error) => {
       const message = [
         `Failed to start retentia CLI: ${error.message}`,
-        `Set 'codexMem.cliPath' in VS Code settings, or ensure one of these exists:`,
+        `Set 'retentia.cliPath' in VS Code settings, or ensure one of these exists:`,
         ...getAutoDetectCandidates(cwd).map((candidate) => `- ${candidate}`),
-        `Or make sure 'retentia' (or legacy 'codex-mem') is on PATH.`,
+        `Or make sure 'retentia' is on PATH.`,
       ].join("\n");
       OUTPUT.appendLine(message);
       reject(new Error(message));
@@ -894,7 +906,7 @@ async function runCliRaw(args: string[]): Promise<string> {
 
 function resolveCli(workspaceRoot: string): CliResolution {
   const configured = vscode.workspace
-    .getConfiguration("codexMem")
+    .getConfiguration("retentia")
     .get<string>("cliPath", "")
     .trim();
 
@@ -934,9 +946,6 @@ function getAutoDetectCandidates(workspaceRoot: string): string[] {
     join(workspaceRoot, "retentia", "dist", "cli.js"),
     join(workspaceRoot, "..", "retentia", "dist", "cli.js"),
     join(workspaceRoot, "..", "..", "retentia", "dist", "cli.js"),
-    join(workspaceRoot, "codex-mem", "dist", "cli.js"),
-    join(workspaceRoot, "..", "codex-mem", "dist", "cli.js"),
-    join(workspaceRoot, "..", "..", "codex-mem", "dist", "cli.js"),
   ];
 
   return [...new Set(candidates)];
@@ -1315,6 +1324,14 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .metric { padding: 8px 10px; min-width: 0; }
       .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
       .v { font-size: 18px; font-weight: 760; margin-top: 3px; }
+      .trend-plane { padding: 10px 12px; display: grid; gap: 10px; }
+      .trend-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .trend-card { min-width: 0; display: grid; gap: 8px; }
+      .trend-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 700; }
+      .trend-bars { height: 74px; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items: end; gap: 4px; border-bottom: 1px solid var(--line); padding-top: 6px; }
+      .trend-bar { min-width: 0; border-radius: 4px 4px 0 0; background: var(--blue); position: relative; }
+      .trend-bar.failed { background: var(--red); }
+      .trend-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; color: var(--muted); font-size: 11px; }
       .workbench { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, 390px); gap: 10px; }
       .map-panel, .inspector { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
       .panel-head { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
@@ -1342,7 +1359,7 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .memory-plane { min-height: 0; overflow: auto; padding: 12px; }
       .hidden { display: none; }
       .error { border: 1px solid var(--red); color: var(--red); padding: 10px; border-radius: 8px; margin-bottom: 12px; }
-      @media (max-width: 980px) { .metrics, .workbench { grid-template-columns: 1fr; } .top { align-items: flex-start; flex-direction: column; } .map-panel { min-height: 520px; } .graph svg { min-width: 820px; min-height: 520px; } }
+      @media (max-width: 980px) { .metrics, .trend-grid, .workbench { grid-template-columns: 1fr; } .top { align-items: flex-start; flex-direction: column; } .map-panel { min-height: 520px; } .graph svg { min-width: 820px; min-height: 520px; } }
     </style>
   </head>
   <body>
@@ -1353,6 +1370,7 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       </div>
       <div id="dashboardError"></div>
       <section id="metricStrip" class="metrics"></section>
+      <section id="trendPlane" class="panel trend-plane"></section>
       <section id="controlPlane" class="workbench">
         <div class="map-panel"><div class="panel-head"><h2>Agent Task Map</h2><span class="muted">Select latest active task in inspector</span></div><div id="graph" class="graph"></div></div>
         <aside class="inspector"><div class="panel-head"><h2>Inspector</h2><span id="updatedAt" class="muted">n/a</span></div><div id="inspectorBody" class="inspector-body"></div></aside>
@@ -1430,6 +1448,7 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
         if (updated) updated.textContent = String(payload.updatedAt || "n/a");
         setHtml("dashboardError", payload.errorHtml);
         setHtml("metricStrip", payload.metricsHtml);
+        setHtml("trendPlane", payload.trendHtml);
         setHtml("graph", payload.graphHtml);
         setHtml("inspectorBody", payload.inspectorHtml);
         setHtml("memoryPlane", payload.memoryHtml);
@@ -1454,6 +1473,7 @@ function buildAgentDashboardPayload(
   const activities = arrayOfRecords(data.activities);
   const memories = arrayOfRecords(data.memories);
   const edges = arrayOfRecords(data.edges);
+  const trends = toRecord(data.trends);
   const contextPreview = toRecord(data.contextPreview);
   const graphNodes = buildGraphNodes(agents, tasks, memories);
   const activeTasks = tasks.filter(
@@ -1468,6 +1488,7 @@ function buildAgentDashboardPayload(
       toNumber(totals.events) ?? 0,
       toNumber(totals.tasks) ?? 0,
       activities[0] ? toText(activities[0].id) : "0",
+      JSON.stringify(trends),
     ].join(":"),
     subtitle: `${toText(data.dataFile) || "n/a"} / ${formatIso(generatedAt)}`,
     updatedAt: formatIsoCompact(generatedAt),
@@ -1480,12 +1501,74 @@ function buildAgentDashboardPayload(
       metric("Activity", activities.length),
       metric("Relations", edges.length),
     ].join(""),
+    trendHtml: renderTrendPlane(trends),
     graphHtml: renderAgentGraphSvg(graphNodes, edges, tasks),
     inspectorHtml: renderInspector(tasks, agents, activities, contextPreview),
     memoryHtml: renderMemoryPlane(memories, contextPreview),
     detailsByNode: buildNodeDetails(tasks, agents, activities, contextPreview),
     defaultNodeId: focusTask ? `task:${toText(focusTask.id)}` : "",
   };
+}
+
+function renderTrendPlane(trends: JsonResult): string {
+  const daily = arrayOfRecords(trends.daily);
+  const weekly = arrayOfRecords(trends.weekly);
+  return `
+    <div class="trend-grid">
+      ${renderTrendCard("Daily executions", daily)}
+      ${renderTrendCard("Weekly executions", weekly)}
+    </div>
+  `;
+}
+
+function renderTrendCard(title: string, buckets: JsonResult[]): string {
+  if (buckets.length === 0) {
+    return `<div class="trend-card"><div class="trend-title"><span>${escapeHtml(title)}</span><span class="muted">No data</span></div><div class="muted">No execution trend data yet.</div></div>`;
+  }
+
+  const maxCount = Math.max(
+    1,
+    ...buckets.map((bucket) => toNumber(bucket.count) ?? 0),
+  );
+  const latest = buckets[buckets.length - 1] || {};
+  const total = buckets.reduce(
+    (sum, bucket) => sum + (toNumber(bucket.count) ?? 0),
+    0,
+  );
+  const completed = buckets.reduce(
+    (sum, bucket) => sum + (toNumber(bucket.completed) ?? 0),
+    0,
+  );
+  const failed = buckets.reduce(
+    (sum, bucket) => sum + (toNumber(bucket.failed) ?? 0),
+    0,
+  );
+  const bars = buckets
+    .map((bucket) => {
+      const count = toNumber(bucket.count) ?? 0;
+      const failedCount = toNumber(bucket.failed) ?? 0;
+      const key = toText(bucket.key) || "bucket";
+      const delta = toNumber(bucket.delta) ?? 0;
+      const height = Math.max(6, Math.round((count / maxCount) * 68));
+      const label = `${key}: ${count} execution(s), delta ${formatDelta(delta)}`;
+      return `<div class="trend-bar${failedCount > 0 ? " failed" : ""}" style="height:${height}px" title="${escapeHtml(label)}"></div>`;
+    })
+    .join("");
+
+  return `
+    <div class="trend-card">
+      <div class="trend-title"><span>${escapeHtml(title)}</span><span class="muted">${escapeHtml(toText(latest.key) || "n/a")} ${escapeHtml(formatDelta(toNumber(latest.delta) ?? 0))}</span></div>
+      <div class="trend-bars" aria-label="${escapeHtml(title)}">${bars}</div>
+      <div class="trend-meta"><span>Total ${total}</span><span>Done ${completed}</span><span>Failed ${failed}</span></div>
+    </div>
+  `;
+}
+
+function formatDelta(value: number): string {
+  if (value > 0) {
+    return `+${value}`;
+  }
+  return String(value);
 }
 
 function renderInspector(
@@ -1967,6 +2050,10 @@ function createEmptyDashboardData(error?: string): DashboardData {
       agents: [],
       models: [],
       statuses: [],
+      trends: {
+        daily: [],
+        weekly: [],
+      },
       tasks: [],
     },
     db: {
@@ -2050,13 +2137,13 @@ async function syncTaskExecutions(options: {
 
 function isAutoSyncEnabled(): boolean {
   return vscode.workspace
-    .getConfiguration("codexMem")
-    .get<boolean>("autoSyncCodexTasks", true);
+    .getConfiguration("retentia")
+    .get<boolean>("autoSyncTasks", true);
 }
 
 function getAutoSyncMaxImport(): number {
   const configured = vscode.workspace
-    .getConfiguration("codexMem")
+    .getConfiguration("retentia")
     .get<number>("autoSyncMaxImport", DEFAULT_AUTO_SYNC_MAX_IMPORT);
   if (typeof configured !== "number" || !Number.isFinite(configured)) {
     return DEFAULT_AUTO_SYNC_MAX_IMPORT;
@@ -2066,7 +2153,7 @@ function getAutoSyncMaxImport(): number {
 
 function getAutoSyncMaxFiles(): number {
   const configured = vscode.workspace
-    .getConfiguration("codexMem")
+    .getConfiguration("retentia")
     .get<number>("autoSyncMaxFiles", DEFAULT_AUTO_SYNC_MAX_FILES);
   if (typeof configured !== "number" || !Number.isFinite(configured)) {
     return DEFAULT_AUTO_SYNC_MAX_FILES;
@@ -2076,7 +2163,7 @@ function getAutoSyncMaxFiles(): number {
 
 function getAutoSyncLookbackDays(): number {
   const configured = vscode.workspace
-    .getConfiguration("codexMem")
+    .getConfiguration("retentia")
     .get<number>("autoSyncLookbackDays", DEFAULT_AUTO_SYNC_LOOKBACK_DAYS);
   if (typeof configured !== "number" || !Number.isFinite(configured)) {
     return DEFAULT_AUTO_SYNC_LOOKBACK_DAYS;
@@ -2086,7 +2173,7 @@ function getAutoSyncLookbackDays(): number {
 
 function getEnabledProviders(): string[] {
   const configured = vscode.workspace
-    .getConfiguration("codexMem")
+    .getConfiguration("retentia")
     .get<string[]>("enabledProviders", ["copilot", "codex", "claude-code"]);
 
   if (!Array.isArray(configured) || configured.length === 0) {
@@ -2112,7 +2199,7 @@ function getEnabledProviders(): string[] {
 
 function getPathSetting(key: string): string | undefined {
   const configured = vscode.workspace
-    .getConfiguration("codexMem")
+    .getConfiguration("retentia")
     .get<string>(key, "")
     .trim();
   return configured || undefined;
@@ -2120,7 +2207,7 @@ function getPathSetting(key: string): string | undefined {
 
 function getExecutionReportLimit(): number {
   const configured = vscode.workspace
-    .getConfiguration("codexMem")
+    .getConfiguration("retentia")
     .get<number>("executionReportLimit", DEFAULT_EXECUTION_REPORT_LIMIT);
   if (typeof configured !== "number" || !Number.isFinite(configured)) {
     return DEFAULT_EXECUTION_REPORT_LIMIT;
@@ -2152,8 +2239,36 @@ function mapExecutionReport(root: JsonResult): DashboardData["execution"] {
     agents: mapExecutionCounts(root.agents),
     models: mapExecutionCounts(root.models),
     statuses: mapExecutionCounts(root.statuses),
+    trends: mapExecutionTrends(root.trends),
     tasks: mapExecutionTasks(root.tasks),
   };
+}
+
+function mapExecutionTrends(
+  value: unknown,
+): DashboardData["execution"]["trends"] {
+  const root = toRecord(value);
+  return {
+    daily: mapTrendBuckets(root.daily),
+    weekly: mapTrendBuckets(root.weekly),
+  };
+}
+
+function mapTrendBuckets(value: unknown): DashboardTrendBucket[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item) => {
+    const bucket = toRecord(item);
+    return {
+      key: toText(bucket.key) || "unknown",
+      count: toNumber(bucket.count) ?? 0,
+      completed: toNumber(bucket.completed) ?? 0,
+      failed: toNumber(bucket.failed) ?? 0,
+      delta: toNumber(bucket.delta) ?? 0,
+    };
+  });
 }
 
 function mapExecutionProjects(

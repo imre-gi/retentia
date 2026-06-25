@@ -171,6 +171,19 @@ export interface V2DashboardActivity {
   payloadPreview: string;
 }
 
+export interface V2TrendBucket {
+  key: string;
+  count: number;
+  completed: number;
+  failed: number;
+  delta: number;
+}
+
+export interface V2DashboardTrends {
+  daily: V2TrendBucket[];
+  weekly: V2TrendBucket[];
+}
+
 export interface V2DashboardData {
   generatedAt: string;
   dataFile: string;
@@ -184,6 +197,7 @@ export interface V2DashboardData {
   };
   agents: V2DashboardAgent[];
   tasks: V2DashboardTask[];
+  trends: V2DashboardTrends;
   activities: V2DashboardActivity[];
   memories: V2Memory[];
   edges: V2GraphEdge[];

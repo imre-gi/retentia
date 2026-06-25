@@ -185,6 +185,19 @@ export interface ExecutionReportProjectSummary {
   latestAt?: string;
 }
 
+export interface ExecutionTrendBucket {
+  key: string;
+  count: number;
+  completed: number;
+  failed: number;
+  delta: number;
+}
+
+export interface ExecutionReportTrends {
+  daily: ExecutionTrendBucket[];
+  weekly: ExecutionTrendBucket[];
+}
+
 export interface ExecutionReport {
   total: number;
   projects: ExecutionReportProjectSummary[];
@@ -192,5 +205,6 @@ export interface ExecutionReport {
   agents: ExecutionReportCount[];
   models: ExecutionReportCount[];
   statuses: ExecutionReportCount[];
+  trends: ExecutionReportTrends;
   tasks: ExecutionReportTask[];
 }

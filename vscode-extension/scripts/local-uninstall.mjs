@@ -18,9 +18,9 @@ if (!codeCli) {
   process.exit(0);
 }
 
-const extensionIds = csv(process.env.CODEX_MEM_VSCODE_EXTENSION_IDS).length
-  ? csv(process.env.CODEX_MEM_VSCODE_EXTENSION_IDS)
-  : ["local.retentia-vscode", "local.codex-mem-vscode"];
+const extensionIds = csv(process.env.RETENTIA_VSCODE_EXTENSION_IDS).length
+  ? csv(process.env.RETENTIA_VSCODE_EXTENSION_IDS)
+  : ["local.retentia-vscode"];
 
 for (const extensionId of extensionIds) {
   run(codeCli, ["--uninstall-extension", extensionId], EXT_DIR, true);
@@ -39,7 +39,7 @@ log("Local extension uninstall complete.");
 function resolveCodeCli() {
   codeCliResolutionHint = "";
   const candidates = [];
-  const envCli = (process.env.CODEX_MEM_VSCODE_CLI || "").trim();
+  const envCli = (process.env.RETENTIA_VSCODE_CLI || "").trim();
   if (envCli) {
     candidates.push(envCli);
   }
@@ -84,7 +84,7 @@ function ensureCodeCliUsable(candidate) {
     return {
       ok: false,
       hint:
-        "Detected a VS Code CLI candidate, but it could not be used. Set CODEX_MEM_VSCODE_CLI to a working 'code' command/path."
+        "Detected a VS Code CLI candidate, but it could not be used. Set RETENTIA_VSCODE_CLI to a working 'code' command/path."
     };
   }
 
@@ -93,7 +93,7 @@ function ensureCodeCliUsable(candidate) {
     return {
       ok: false,
       hint:
-        "Detected a VS Code remote CLI, but no active VS Code IPC socket was found. Open a VS Code remote window and retry, or set CODEX_MEM_VSCODE_CLI to a local 'code' command."
+        "Detected a VS Code remote CLI, but no active VS Code IPC socket was found. Open a VS Code remote window and retry, or set RETENTIA_VSCODE_CLI to a local 'code' command."
     };
   }
 
@@ -112,7 +112,7 @@ function ensureCodeCliUsable(candidate) {
   return {
     ok: false,
     hint:
-      "Detected a VS Code remote CLI, but the IPC socket could not be reached. Open/reload the remote VS Code window and retry, or set CODEX_MEM_VSCODE_CLI."
+      "Detected a VS Code remote CLI, but the IPC socket could not be reached. Open/reload the remote VS Code window and retry, or set RETENTIA_VSCODE_CLI."
   };
 }
 
@@ -242,13 +242,13 @@ function wslRemoteCodeCandidates() {
 }
 
 function listProfiles() {
-  const explicit = (process.env.CODEX_MEM_VSCODE_PROFILE || "").trim();
+  const explicit = (process.env.RETENTIA_VSCODE_PROFILE || "").trim();
   if (explicit) {
     return [explicit];
   }
 
   const storageFile =
-    process.env.CODEX_MEM_VSCODE_STORAGE_FILE || defaultVsCodeStorageFile();
+    process.env.RETENTIA_VSCODE_STORAGE_FILE || defaultVsCodeStorageFile();
   if (!existsSync(storageFile)) {
     return [];
   }

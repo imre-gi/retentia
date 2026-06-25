@@ -7,7 +7,7 @@
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "https://github.com/imre-gi/codex-mem.git",
+        "url": "https://github.com/imre-gi/retentia.git",
         "directory": "vscode-extension"
     },
     "engines": {
@@ -23,51 +23,51 @@
     "contributes": {
         "commands": [
             {
-                "command": "codexMem.setup",
+                "command": "retentia.setup",
                 "title": "Retentia: Install MCP for Codex"
             },
             {
-                "command": "codexMem.enableMcp",
+                "command": "retentia.enableMcp",
                 "title": "Retentia: Enable MCP for Codex"
             },
             {
-                "command": "codexMem.initStore",
+                "command": "retentia.initStore",
                 "title": "Retentia: Initialize Store"
             },
             {
-                "command": "codexMem.syncCodexTasks",
+                "command": "retentia.syncTasks",
                 "title": "Retentia: Import Copilot, Codex, and Claude Code Tasks"
             },
             {
-                "command": "codexMem.projectExplorer",
+                "command": "retentia.projectExplorer",
                 "title": "Retentia: Agent Command Center"
             },
             {
-                "command": "codexMem.statusDashboard",
+                "command": "retentia.statusDashboard",
                 "title": "Retentia: Inspect Agents and Swarms"
             },
             {
-                "command": "codexMem.openSettings",
+                "command": "retentia.openSettings",
                 "title": "Retentia: Open Settings"
             },
             {
-                "command": "codexMem.addObservation",
+                "command": "retentia.addObservation",
                 "title": "Retentia: Add Memory"
             },
             {
-                "command": "codexMem.addSummary",
+                "command": "retentia.addSummary",
                 "title": "Retentia: Save Session Memory"
             },
             {
-                "command": "codexMem.search",
+                "command": "retentia.search",
                 "title": "Retentia: Search Memory"
             },
             {
-                "command": "codexMem.contextPack",
+                "command": "retentia.contextPack",
                 "title": "Retentia: Generate Context Pack"
             },
             {
-                "command": "codexMem.openMemoryFile",
+                "command": "retentia.openMemoryFile",
                 "title": "Retentia: Open Memory File"
             }
         ],
@@ -84,7 +84,7 @@
             "retentiaSidebar": [
                 {
                     "type": "webview",
-                    "id": "codexMem.quickInput",
+                    "id": "retentia.quickInput",
                     "name": "Quick Input"
                 }
             ]
@@ -92,22 +92,22 @@
         "configuration": {
             "title": "Retentia",
             "properties": {
-                "codexMem.cliPath": {
+                "retentia.cliPath": {
                     "type": "string",
                     "default": "",
                     "description": "Optional absolute path to the retentia CLI binary (or dist/cli.js file). Leave empty for auto-detection."
                 },
-                "codexMem.defaultProject": {
+                "retentia.defaultProject": {
                     "type": "string",
                     "default": "",
                     "description": "Optional default project name to use when adding entries from VS Code."
                 },
-                "codexMem.autoSyncCodexTasks": {
+                "retentia.autoSyncTasks": {
                     "type": "boolean",
                     "default": true,
                     "description": "Automatically sync task-execution events from Copilot, Codex, and Claude Code into Retentia when refreshing the dashboard."
                 },
-                "codexMem.enabledProviders": {
+                "retentia.enabledProviders": {
                     "type": "array",
                     "items": {
                         "type": "string",
@@ -125,43 +125,43 @@
                     ],
                     "description": "Enabled providers for task ingestion. Use 'all' for Copilot, Codex, and Claude Code."
                 },
-                "codexMem.autoSyncLookbackDays": {
+                "retentia.autoSyncLookbackDays": {
                     "type": "number",
                     "default": 7,
                     "minimum": 1,
                     "maximum": 30,
                     "description": "How many recent days of provider session logs are scanned for task execution events."
                 },
-                "codexMem.autoSyncMaxImport": {
+                "retentia.autoSyncMaxImport": {
                     "type": "number",
                     "default": 25,
                     "minimum": 1,
                     "maximum": 1000,
                     "description": "Maximum number of new task executions imported into memory per sync run."
                 },
-                "codexMem.autoSyncMaxFiles": {
+                "retentia.autoSyncMaxFiles": {
                     "type": "number",
                     "default": 24,
                     "minimum": 1,
                     "maximum": 200,
                     "description": "Maximum number of recent session files scanned per provider during sync."
                 },
-                "codexMem.copilotTranscriptsPath": {
+                "retentia.copilotTranscriptsPath": {
                     "type": "string",
                     "default": "",
                     "description": "Optional custom path to Copilot Chat transcripts or a VS Code workspaceStorage directory. Leave empty to auto-detect common VS Code locations."
                 },
-                "codexMem.codexSessionsPath": {
+                "retentia.codexSessionsPath": {
                     "type": "string",
                     "default": "",
                     "description": "Optional custom path to Codex sessions directory. Leave empty to use ~/.codex/sessions."
                 },
-                "codexMem.claudeSessionsPath": {
+                "retentia.claudeSessionsPath": {
                     "type": "string",
                     "default": "",
                     "description": "Optional custom path to Claude Code sessions directory. Leave empty to use ~/.claude/projects."
                 },
-                "codexMem.executionReportLimit": {
+                "retentia.executionReportLimit": {
                     "type": "number",
                     "default": 600,
                     "minimum": 50,

@@ -9,6 +9,7 @@ import type {
   V2DashboardAgent,
   V2DashboardData,
   V2DashboardTask,
+  V2DashboardTrends,
   V2Event,
   V2EventInput,
   V2ImportedEventResult,
@@ -73,8 +74,14 @@ interface EventImportRow {
   imported_at: string;
 }
 
+interface ExecutionTrendTask {
+  lastSeenAt: string;
+  status: string;
+}
+
 const DEFAULT_PROJECT = "global";
 const DEFAULT_CONTEXT_CHARS = 1600;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export class V2MemoryEngine {
   private readonly db: Database.Database;
@@ -333,9 +340,11 @@ export class V2MemoryEngine {
 
   buildDashboard(limit = 80): V2DashboardData {
     const recentEvents = this.listEvents(limit);
+    const trendEvents = this.listEvents(Math.max(limit, 500));
     const memories = this.listMemories(limit);
     const edges = this.listEdges(limit * 2);
     const tasks = buildTasks(recentEvents);
+    const trends = buildExecutionTrends(trendEvents);
     const agents = buildAgents(recentEvents, tasks);
     const activities = buildActivities(recentEvents);
     const projects = new Set([
@@ -356,6 +365,7 @@ export class V2MemoryEngine {
       },
       agents,
       tasks,
+      trends,
       activities,
       memories,
       edges,
@@ -622,6 +632,142 @@ function buildTasks(events: V2Event[]): V2DashboardTask[] {
   return [...tasks.values()].sort((left, right) =>
     right.lastSeenAt.localeCompare(left.lastSeenAt),
   );
+}
+
+function buildExecutionTrends(events: V2Event[]): V2DashboardTrends {
+  const tasks = buildExecutionTrendTasks(events);
+  return {
+    daily: buildTrendBuckets(tasks, "daily", 14),
+    weekly: buildTrendBuckets(tasks, "weekly", 8),
+  };
+}
+
+function buildExecutionTrendTasks(events: V2Event[]): ExecutionTrendTask[] {
+  const tasks = new Map<string, ExecutionTrendTask>();
+  const orderedEvents = [...events].sort((left, right) => {
+    const byTime = left.createdAt.localeCompare(right.createdAt);
+    return byTime !== 0 ? byTime : left.id - right.id;
+  });
+
+  for (const event of orderedEvents) {
+    if (!event.taskId || !event.type.startsWith("task_")) {
+      continue;
+    }
+
+    const current = tasks.get(event.taskId) || {
+      lastSeenAt: event.createdAt,
+      status: "active",
+    };
+    current.lastSeenAt =
+      event.createdAt > current.lastSeenAt
+        ? event.createdAt
+        : current.lastSeenAt;
+    if (event.type === "task_completed") {
+      current.status = "completed";
+    } else if (event.type === "task_failed") {
+      current.status = "failed";
+    } else if (event.type === "task_started") {
+      current.status = "active";
+    }
+    tasks.set(event.taskId, current);
+  }
+
+  return [...tasks.values()];
+}
+
+function buildTrendBuckets(
+  tasks: ExecutionTrendTask[],
+  grain: "daily" | "weekly",
+  bucketCount: number,
+): V2DashboardTrends["daily"] {
+  const anchorMs = resolveTrendAnchorMs(tasks);
+  const anchorStart =
+    grain === "daily"
+      ? startOfUtcDay(anchorMs)
+      : startOfUtcWeek(anchorMs);
+  const stepMs = grain === "daily" ? DAY_MS : DAY_MS * 7;
+  const buckets = new Map<
+    number,
+    { key: string; count: number; completed: number; failed: number }
+  >();
+
+  for (let index = bucketCount - 1; index >= 0; index -= 1) {
+    const startMs = anchorStart - index * stepMs;
+    buckets.set(startMs, {
+      key:
+        grain === "daily"
+          ? formatUtcDateKey(startMs)
+          : formatUtcWeekKey(startMs),
+      count: 0,
+      completed: 0,
+      failed: 0,
+    });
+  }
+
+  for (const task of tasks) {
+    const timestampMs = Date.parse(task.lastSeenAt);
+    if (!Number.isFinite(timestampMs)) {
+      continue;
+    }
+    const bucketStart =
+      grain === "daily"
+        ? startOfUtcDay(timestampMs)
+        : startOfUtcWeek(timestampMs);
+    const bucket = buckets.get(bucketStart);
+    if (!bucket) {
+      continue;
+    }
+    bucket.count += 1;
+    if (task.status === "completed") {
+      bucket.completed += 1;
+    } else if (task.status === "failed") {
+      bucket.failed += 1;
+    }
+  }
+
+  let previousCount = 0;
+  return [...buckets.values()].map((bucket) => {
+    const delta = bucket.count - previousCount;
+    previousCount = bucket.count;
+    return { ...bucket, delta };
+  });
+}
+
+function resolveTrendAnchorMs(tasks: ExecutionTrendTask[]): number {
+  const latest = tasks
+    .map((task) => Date.parse(task.lastSeenAt))
+    .filter((timestamp) => Number.isFinite(timestamp))
+    .sort((left, right) => right - left)[0];
+  return latest ?? Date.now();
+}
+
+function startOfUtcDay(timestampMs: number): number {
+  const date = new Date(timestampMs);
+  return Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+  );
+}
+
+function startOfUtcWeek(timestampMs: number): number {
+  const dayStart = startOfUtcDay(timestampMs);
+  const day = new Date(dayStart).getUTCDay();
+  const mondayOffset = (day + 6) % 7;
+  return dayStart - mondayOffset * DAY_MS;
+}
+
+function formatUtcDateKey(timestampMs: number): string {
+  return new Date(timestampMs).toISOString().slice(0, 10);
+}
+
+function formatUtcWeekKey(timestampMs: number): string {
+  const thursday = new Date(startOfUtcWeek(timestampMs) + 3 * DAY_MS);
+  const year = thursday.getUTCFullYear();
+  const firstThursday = Date.UTC(year, 0, 4);
+  const firstWeekStart = startOfUtcWeek(firstThursday);
+  const week = Math.floor((startOfUtcWeek(timestampMs) - firstWeekStart) / (7 * DAY_MS)) + 1;
+  return `${year}-W${String(week).padStart(2, "0")}`;
 }
 
 function buildActivities(events: V2Event[]): V2DashboardActivity[] {

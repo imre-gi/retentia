@@ -66,6 +66,7 @@ interface ClaudeTaskPending {
   subagentType?: string;
   prompt?: string;
   toolUseId: string;
+  metadata?: Record<string, unknown>;
 }
 
 const DEFAULT_LOOKBACK_DAYS = 7;
@@ -263,12 +264,32 @@ function parseCopilotEvents(
       asText(root.id) || sha1(`${filePath}:${timestamp}:${type}`);
     const turnId =
       asText(data.turnId) || currentTurnId || asText(root.parentId) || recordId;
+    const model = asText(data.model) || asText(root.model);
+    const conversationId =
+      asText(data.conversationId) ||
+      asText(data.conversation_id) ||
+      asText(root.conversationId);
+    const requestId =
+      asText(data.requestId) ||
+      asText(data.request_id) ||
+      asText(root.requestId);
+    const workspaceFolder =
+      asText(data.workspaceFolder) ||
+      asText(data.workspace_folder) ||
+      asText(data.cwd) ||
+      asText(root.workspaceFolder);
     const taskId = `copilot:${sessionId}:turn:${turnId}`;
-    const project = fallbackProject || inferProjectFromRecord(root);
+    const project =
+      fallbackProject ||
+      inferProjectFromRecord(root) ||
+      (workspaceFolder ? basename(workspaceFolder) : undefined);
     const tags = [
       "provider:copilot",
       `session:${toTagValue(sessionId)}`,
       `type:${toTagValue(type)}`,
+      ...tagIf("model", model),
+      ...tagIf("conversation", conversationId),
+      ...tagIf("request", requestId),
     ];
     const basePayload = {
       provider: "copilot",
@@ -276,6 +297,23 @@ function parseCopilotEvents(
       transcriptFile: filePath,
       transcriptRecordId: recordId,
       transcriptType: type,
+      model,
+      conversationId,
+      requestId,
+      workspaceFolder,
+      turnId,
+      metadata: {
+        provider: "copilot",
+        recordId,
+        sessionId,
+        turnId,
+        model,
+        conversationId,
+        requestId,
+        workspaceFolder,
+        parentId: asText(root.parentId),
+        messageId: asText(data.messageId),
+      },
       data,
     };
 
@@ -349,6 +387,7 @@ function parseCopilotEvents(
 
     if (type === "tool.execution_start" || type === "tool.execution_complete") {
       const toolName = asText(data.toolName) || "tool";
+      const toolCallId = asText(data.toolCallId);
       const success = data.success === false ? "failed" : "completed";
       events.push({
         provider: "copilot",
@@ -365,12 +404,23 @@ function parseCopilotEvents(
             type === "tool.execution_start"
               ? `Started ${toolName}`
               : `${toolName} ${success}`,
-          tags: [...tags, `tool:${toTagValue(toolName)}`],
+          tags: [
+            ...tags,
+            `tool:${toTagValue(toolName)}`,
+            ...tagIf("tool_call", toolCallId),
+          ],
           payload: {
             ...basePayload,
             toolName,
-            toolCallId: asText(data.toolCallId),
+            toolCallId,
             status: type === "tool.execution_start" ? "running" : success,
+            metadata: {
+              ...basePayload.metadata,
+              toolName,
+              toolCallId,
+              status: type === "tool.execution_start" ? "running" : success,
+              success: data.success,
+            },
           },
           createdAt: timestamp,
         },
@@ -381,8 +431,16 @@ function parseCopilotEvents(
     if (type === "assistant.message" || type === "user.message") {
       const content = extractTextFromValue(data.content);
       const reasoningSummary = clip(asText(data.reasoningText) || "", 900);
-      const toolRequests = asArray(data.toolRequests)
-        .map((item) => asText(asRecord(item).name))
+      const toolRequestMetadata = asArray(data.toolRequests).map((item) => {
+        const request = asRecord(item);
+        return {
+          id: asText(request.id),
+          name: asText(request.name),
+          status: asText(request.status),
+        };
+      });
+      const toolRequests = toolRequestMetadata
+        .map((item) => item.name)
         .filter(Boolean)
         .join(", ");
       const summary =
@@ -408,6 +466,7 @@ function parseCopilotEvents(
             content: clip(content, 5000),
             reasoningSummary,
             toolRequests,
+            toolRequestMetadata,
             taskDescription: content ? clip(content, 1200) : undefined,
           },
           createdAt: timestamp,
@@ -424,10 +483,160 @@ function parseCodexEvents(
   fallbackProject?: string,
 ): CandidateEvent[] {
   const events: CandidateEvent[] = [];
-  const sessionId = inferSessionIdFromPath(filePath) || "codex-session";
+  let sessionId = inferSessionIdFromPath(filePath) || "codex-session";
+  let sessionMetadata: Record<string, unknown> = {};
+  let turnMetadata: Record<string, unknown> = {};
 
   for (const root of readJsonLines(filePath)) {
-    if (asText(root.type) !== "event_msg") {
+    const recordType = asText(root.type);
+    if (recordType === "session_meta") {
+      const payload = asRecord(root.payload);
+      sessionId =
+        asText(payload.id) ||
+        asText(payload.session_id) ||
+        asText(root.session_id) ||
+        sessionId;
+      sessionMetadata = {
+        provider: "codex",
+        sessionId,
+        model: asText(payload.model) || asText(root.model),
+        cwd:
+          asText(payload.cwd) ||
+          asText(payload.project_path) ||
+          asText(root.cwd),
+        cliVersion: asText(payload.version) || asText(root.version),
+        approvalPolicy:
+          asText(payload.approval_policy) || asText(payload.approvalPolicy),
+        sandboxMode: asText(payload.sandbox_mode) || asText(payload.sandboxMode),
+      };
+      continue;
+    }
+
+    if (recordType === "turn_context") {
+      const payload = asRecord(root.payload);
+      turnMetadata = {
+        provider: "codex",
+        sessionId,
+        turnId:
+          asText(payload.turn_id) ||
+          asText(payload.turnId) ||
+          asText(root.turn_id) ||
+          asText(root.id),
+        cwd:
+          asText(payload.cwd) ||
+          asText(payload.project_path) ||
+          asText(root.cwd),
+        model: asText(payload.model) || asText(root.model),
+        promptId:
+          asText(payload.prompt_id) ||
+          asText(payload.promptId) ||
+          asText(root.prompt_id),
+      };
+      continue;
+    }
+
+    if (recordType === "response_item") {
+      const payload = asRecord(root.payload);
+      const itemType =
+        asText(payload.type) || asText(root.item_type) || "response_item";
+      const timestamp =
+        asText(root.timestamp) ||
+        asText(payload.timestamp) ||
+        asText(root.created_at);
+      const turnId =
+        asText(payload.turn_id) ||
+        asText(payload.turnId) ||
+        asText(turnMetadata.turnId) ||
+        asText(root.id);
+      if (!timestamp || !turnId) {
+        continue;
+      }
+
+      const toolName =
+        asText(payload.name) ||
+        asText(payload.tool_name) ||
+        asText(payload.toolName);
+      const itemId = asText(payload.id) || asText(root.id) || sha1(`${filePath}:${timestamp}:${itemType}`);
+      const model =
+        asText(payload.model) ||
+        asText(root.model) ||
+        asText(turnMetadata.model) ||
+        asText(sessionMetadata.model);
+      const cwd =
+        asText(payload.cwd) ||
+        asText(turnMetadata.cwd) ||
+        asText(sessionMetadata.cwd);
+      const project =
+        fallbackProject ||
+        inferProjectFromRecord(root) ||
+        (cwd ? basename(cwd) : undefined);
+      const summary =
+        extractTextFromValue(payload.arguments) ||
+        extractTextFromValue(payload.output) ||
+        extractTextFromValue(payload.content) ||
+        extractTextFromValue(payload.message) ||
+        (toolName ? `Codex called ${toolName}` : `Codex ${itemType}`);
+      const normalizedItemType = itemType.toLowerCase();
+      const eventType =
+        normalizedItemType.includes("tool") ||
+        normalizedItemType.includes("function")
+          ? "tool_call"
+          : "message";
+      const taskId = `codex:${sessionId}:turn:${turnId}`;
+      const tags = [
+        "provider:codex",
+        `session:${toTagValue(sessionId)}`,
+        `type:${toTagValue(itemType)}`,
+        ...tagIf("model", model),
+        ...tagIf("tool", toolName),
+      ];
+
+      events.push({
+        provider: "codex",
+        externalKey: `codex:${sessionId}:${turnId}:response:${itemId}`,
+        timestamp,
+        input: {
+          type: eventType,
+          source: "codex",
+          actor: "codex",
+          role: "agent",
+          taskId,
+          project,
+          summary: clip(summary, 240),
+          tags,
+          payload: {
+            provider: "codex",
+            sessionId,
+            sessionFile: filePath,
+            turnId,
+            itemId,
+            itemType,
+            model,
+            cwd,
+            toolName,
+            content: clip(summary, 5000),
+            taskDescription: clip(summary, 1200),
+            metadata: {
+              provider: "codex",
+              sessionId,
+              turnId,
+              itemId,
+              itemType,
+              model,
+              cwd,
+              toolName,
+              session: sessionMetadata,
+              turn: turnMetadata,
+            },
+            payload,
+          },
+          createdAt: timestamp,
+        },
+      });
+      continue;
+    }
+
+    if (recordType !== "event_msg") {
       continue;
     }
 
@@ -457,6 +666,19 @@ function parseCodexEvents(
           ? "task_completed"
           : "task_started";
     const taskId = `codex:${sessionId}:turn:${turnId}`;
+    const model =
+      asText(payload.model) ||
+      asText(root.model) ||
+      asText(turnMetadata.model) ||
+      asText(sessionMetadata.model);
+    const cwd =
+      asText(payload.cwd) ||
+      asText(turnMetadata.cwd) ||
+      asText(sessionMetadata.cwd);
+    const project =
+      fallbackProject ||
+      inferProjectFromRecord(root) ||
+      (cwd ? basename(cwd) : undefined);
 
     events.push({
       provider: "codex",
@@ -468,18 +690,21 @@ function parseCodexEvents(
         actor: "codex",
         role: "agent",
         taskId,
-        project: fallbackProject || inferProjectFromRecord(root),
+        project,
         summary: clip(summary, 240),
         tags: [
           "provider:codex",
           `session:${toTagValue(sessionId)}`,
           `type:${toTagValue(payloadType)}`,
+          ...tagIf("model", model),
         ],
         payload: {
           provider: "codex",
           sessionId,
           sessionFile: filePath,
           turnId,
+          model,
+          cwd,
           payload,
           taskDescription: clip(summary, 1200),
           reasoningSummary: clip(
@@ -488,6 +713,16 @@ function parseCodexEvents(
               "",
             900,
           ),
+          metadata: {
+            provider: "codex",
+            sessionId,
+            turnId,
+            eventType: payloadType,
+            model,
+            cwd,
+            session: sessionMetadata,
+            turn: turnMetadata,
+          },
         },
         createdAt: timestamp,
       },
@@ -512,9 +747,29 @@ function parseClaudeEvents(
       inferSessionIdFromPath(filePath) ||
       "claude-session";
     const cwd = asText(root.cwd);
+    const uuid = asText(root.uuid);
+    const parentUuid = asText(root.parentUuid);
+    const version = asText(root.version);
+    const permissionMode = asText(root.permissionMode);
     const message = asRecord(root.message);
     const model = asText(message.model);
+    const messageId = asText(message.id);
+    const usage = asRecord(message.usage);
+    const stopReason = asText(message.stop_reason);
     const content = asArray(message.content);
+    const recordMetadata = {
+      provider: "claude-code",
+      sessionId,
+      cwd,
+      uuid,
+      parentUuid,
+      version,
+      permissionMode,
+      messageId,
+      model,
+      usage,
+      stopReason,
+    };
 
     if (recordType === "assistant") {
       for (const item of content) {
@@ -544,6 +799,14 @@ function parseClaudeEvents(
           prompt,
           subagentType,
           toolUseId,
+          metadata: {
+            ...recordMetadata,
+            toolName: "Task",
+            toolUseId,
+            taskDescription: description,
+            subagentType,
+            promptLength: (prompt || "").length,
+          },
         });
 
         if (timestamp) {
@@ -565,6 +828,8 @@ function parseClaudeEvents(
               tags: [
                 "provider:claude-code",
                 `session:${toTagValue(sessionId)}`,
+                "tool:task",
+                ...tagIf("model", model),
                 subagentType
                   ? `agent:${toTagValue(subagentType)}`
                   : "agent:claude-code",
@@ -575,9 +840,11 @@ function parseClaudeEvents(
                 sessionFile: filePath,
                 toolUseId,
                 model,
+                cwd,
                 taskTitle: description || `Claude Code task ${toolUseId}`,
                 taskDescription: prompt || description,
                 subagentType,
+                metadata: pendingByToolUseId.get(toolUseId)?.metadata,
               },
               createdAt: timestamp,
             },
@@ -640,6 +907,8 @@ function parseClaudeEvents(
             "provider:claude-code",
             `session:${toTagValue(effectiveSessionId)}`,
             isError ? "status:failed" : "status:completed",
+            "tool:task",
+            ...tagIf("model", pending?.model || model),
             subagentType
               ? `agent:${toTagValue(subagentType)}`
               : "agent:claude-code",
@@ -650,10 +919,20 @@ function parseClaudeEvents(
             sessionFile: filePath,
             toolUseId,
             model: pending?.model || model,
+            cwd: projectPath,
             result: clip(resultText, 5000),
             taskTitle: pending?.description || `Claude Code task ${toolUseId}`,
             taskDescription: pending?.prompt || pending?.description,
             subagentType,
+            isError,
+            metadata: {
+              ...(pending?.metadata || {}),
+              resultRecord: recordMetadata,
+              isError,
+              resultContentType: Array.isArray(toolResult.content)
+                ? "array"
+                : typeof toolResult.content,
+            },
           },
           createdAt: taskTimestamp,
         },
@@ -859,6 +1138,11 @@ function toTagValue(value: string): string {
     .replace(/[^a-z0-9._-]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 120);
+}
+
+function tagIf(key: string, value?: string): string[] {
+  const tagValue = value ? toTagValue(value) : "";
+  return tagValue ? [`${key}:${tagValue}`] : [];
 }
 
 function clip(value: string, maxChars: number): string {

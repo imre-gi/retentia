@@ -42,7 +42,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/imre-gi/codex-mem.git"
+    "url": "https://github.com/imre-gi/retentia.git"
   },
   "engines": {
     "node": ">=20"

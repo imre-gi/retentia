@@ -2,10 +2,6 @@
 
 Retentia for VS Code adds persistent memory workflows, multi-LLM task sync, and execution observability directly into your editor.
 
-Compatibility note:
-- Command IDs and settings keys are still `codexMem.*` for backward compatibility.
-- CLI integration supports both `retentia` (primary) and legacy `codex-mem` aliases.
-
 ![Retentia Dashboard Preview](./assets/retentia-dashboard-preview.png)
 
 ## Install
@@ -32,7 +28,7 @@ Profile-specific reinstall:
 
 ```bash
 cd <repo-root>
-CODEX_MEM_VSCODE_PROFILE="<profile-name>" npm run reinstall:vscode
+RETENTIA_VSCODE_PROFILE="<profile-name>" npm run reinstall:vscode
 ```
 
 ### Development host
@@ -56,28 +52,25 @@ npm run install:local
 If VS Code CLI is not on PATH:
 
 ```bash
-CODEX_MEM_VSCODE_CLI="<path-or-command-for-code>" npm run install:local
+RETENTIA_VSCODE_CLI="<path-or-command-for-code>" npm run install:local
 ```
 
 ## Commands
 
 | Command title | Command ID | What it does |
 | --- | --- | --- |
-| `Retentia: Setup (Enable + Start Worker)` | `codexMem.setup` | Enables MCP and starts worker. |
-| `Retentia: Enable MCP` | `codexMem.enableMcp` | Registers MCP server in Codex config. |
-| `Retentia: Initialize Store` | `codexMem.initStore` | Initializes and verifies local storage. |
-| `Retentia: Start Worker` | `codexMem.startWorker` | Starts worker process. |
-| `Retentia: Stop Worker` | `codexMem.stopWorker` | Stops worker process. |
-| `Retentia: Worker Status` | `codexMem.workerStatus` | Opens worker status payload. |
-| `Retentia: Sync LLM Tasks (Codex/Claude/Qwen/Gwen)` | `codexMem.syncCodexTasks` | Imports provider task execution events. |
-| `Retentia: Project Explorer + Visualizer` | `codexMem.projectExplorer` | Opens dashboard exploration view. |
-| `Retentia: Status Dashboard` | `codexMem.statusDashboard` | Opens full operational dashboard. |
-| `Retentia: Open Settings` | `codexMem.openSettings` | Opens extension settings in VS Code. |
-| `Retentia: Add Observation` | `codexMem.addObservation` | Interactive observation capture flow. |
-| `Retentia: Add Summary` | `codexMem.addSummary` | Interactive summary capture flow. |
-| `Retentia: Search Memory` | `codexMem.search` | Search entries and open detail payloads. |
-| `Retentia: Generate Context Pack` | `codexMem.contextPack` | Build prompt-ready context pack. |
-| `Retentia: Open Memory File` | `codexMem.openMemoryFile` | Open active SQLite file in editor. |
+| `Retentia: Setup (Enable + Start Worker)` | `retentia.setup` | Enables MCP and starts worker. |
+| `Retentia: Enable MCP` | `retentia.enableMcp` | Registers MCP server in Codex config. |
+| `Retentia: Initialize Store` | `retentia.initStore` | Initializes and verifies local storage. |
+| `Retentia: Sync LLM Tasks (Copilot/Codex/Claude Code)` | `retentia.syncTasks` | Imports provider task execution events. |
+| `Retentia: Project Explorer + Visualizer` | `retentia.projectExplorer` | Opens dashboard exploration view. |
+| `Retentia: Status Dashboard` | `retentia.statusDashboard` | Opens full operational dashboard. |
+| `Retentia: Open Settings` | `retentia.openSettings` | Opens extension settings in VS Code. |
+| `Retentia: Add Observation` | `retentia.addObservation` | Interactive observation capture flow. |
+| `Retentia: Add Summary` | `retentia.addSummary` | Interactive summary capture flow. |
+| `Retentia: Search Memory` | `retentia.search` | Search entries and open detail payloads. |
+| `Retentia: Generate Context Pack` | `retentia.contextPack` | Build prompt-ready context pack. |
+| `Retentia: Open Memory File` | `retentia.openMemoryFile` | Open active SQLite file in editor. |
 
 Sidebar:
 - `Retentia` activity bar icon includes `Quick Input` for setup, worker controls, task sync, and direct observation/summary entry forms.
@@ -86,18 +79,16 @@ Sidebar:
 
 | Setting | Default | Intent |
 | --- | --- | --- |
-| `codexMem.cliPath` | `""` | Explicit CLI path (`retentia`, `codex-mem`, or script path). |
-| `codexMem.defaultProject` | `""` | Default project for new entries. |
-| `codexMem.autoSyncCodexTasks` | `true` | Auto-sync task execution on dashboard refresh. |
-| `codexMem.enabledProviders` | `["codex","claude","qwen","gwen"]` | Provider list for ingestion. |
-| `codexMem.autoSyncLookbackDays` | `7` | Session log lookback window. |
-| `codexMem.autoSyncMaxImport` | `25` | Max imported tasks per sync run. |
-| `codexMem.autoSyncMaxFiles` | `24` | Max files scanned per provider. |
-| `codexMem.codexSessionsPath` | `""` | Optional Codex sessions path override. |
-| `codexMem.claudeSessionsPath` | `""` | Optional Claude sessions path override. |
-| `codexMem.qwenSessionsPath` | `""` | Optional Qwen sessions path override. |
-| `codexMem.gwenSessionsPath` | `""` | Optional Gwen sessions path override. |
-| `codexMem.executionReportLimit` | `600` | Max entries loaded into visualizer/explorers. |
+| `retentia.cliPath` | `""` | Explicit CLI path (`retentia` or script path). |
+| `retentia.defaultProject` | `""` | Default project for new entries. |
+| `retentia.autoSyncTasks` | `true` | Auto-sync task execution on dashboard refresh. |
+| `retentia.enabledProviders` | `["copilot","codex","claude-code"]` | Provider list for ingestion. |
+| `retentia.autoSyncLookbackDays` | `7` | Session log lookback window. |
+| `retentia.autoSyncMaxImport` | `25` | Max imported tasks per sync run. |
+| `retentia.autoSyncMaxFiles` | `24` | Max files scanned per provider. |
+| `retentia.codexSessionsPath` | `""` | Optional Codex sessions path override. |
+| `retentia.claudeSessionsPath` | `""` | Optional Claude sessions path override. |
+| `retentia.executionReportLimit` | `600` | Max entries loaded into visualizer/explorers. |
 
 ## Dashboard Walkthrough
 
@@ -108,6 +99,7 @@ The dashboard provides:
 - Runtime panel: PID, uptime, endpoint, MCP command/args, DB file.
 - Provider Sync matrix: detected/imported/skipped/failed by provider.
 - Execution Visualizer: distribution bars by provider/status/agent/model.
+- Execution trend charts: daily and weekly execution deltas.
 - Project Explorer: per-project totals and outcomes.
 - Task Explorer: filterable task list by project/provider/agent/model/status.
 
@@ -117,22 +109,19 @@ The dashboard provides:
 
 - If your workflow does not write memory entries, totals may stay low.
 - The extension can auto-import execution events from enabled providers.
-- Trigger manual import with `Retentia: Sync LLM Tasks (Codex/Claude/Qwen/Gwen)`.
+- Trigger manual import with `Retentia: Sync LLM Tasks (Copilot/Codex/Claude Code)`.
 
 ## CLI Discovery
 
 The extension resolves CLI in this order:
 
-1. `codexMem.cliPath`
+1. `retentia.cliPath`
 2. `<workspace>/dist/cli.js`
 3. `<workspace>/../dist/cli.js`
 4. `<workspace>/retentia/dist/cli.js`
 5. `<workspace>/../retentia/dist/cli.js`
 6. `<workspace>/../../retentia/dist/cli.js`
-7. `<workspace>/codex-mem/dist/cli.js` (legacy folder fallback)
-8. `<workspace>/../codex-mem/dist/cli.js` (legacy folder fallback)
-9. `<workspace>/../../codex-mem/dist/cli.js` (legacy folder fallback)
-10. `retentia` from PATH
+7. `retentia` from PATH
 
 ## Troubleshooting
 
@@ -150,11 +139,10 @@ Then:
 
 ### CLI path resolution fails
 
-Set `codexMem.cliPath` to:
+Set `retentia.cliPath` to:
 
 - `<repo-root>/dist/cli.js`, or
-- `retentia`, or
-- `codex-mem` (legacy alias).
+- `retentia`.
 
 ### MCP visible in extension but not active in Codex
 

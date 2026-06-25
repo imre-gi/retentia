@@ -111,6 +111,13 @@ describe("task sync", () => {
       expect(report.providers.map((item) => item.key)).toContain("codex");
       expect(report.providers.map((item) => item.key)).toContain("claude");
       expect(report.agents.map((item) => item.key)).toContain("backend");
+      expect(report.trends.daily[report.trends.daily.length - 1]).toMatchObject({
+        count: 2,
+        completed: 2
+      });
+      expect(report.trends.daily[report.trends.daily.length - 1]?.key).toMatch(
+        /^\d{4}-\d{2}-\d{2}$/
+      );
     });
   });
 });

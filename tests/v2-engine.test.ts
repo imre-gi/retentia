@@ -208,7 +208,13 @@ describe("V2MemoryEngine", () => {
           }),
           JSON.stringify({
             type: "assistant.turn_start",
-            data: { turnId: "turn-1" },
+            data: {
+              turnId: "turn-1",
+              model: "gpt-4.1",
+              conversationId: "copilot-conversation-1",
+              requestId: "copilot-request-1",
+              workspaceFolder: "/workspace/retentia",
+            },
             id: "copilot-turn-start",
             timestamp: "2026-05-20T20:00:01.000Z",
             parentId: "copilot-session-start",
@@ -237,15 +243,27 @@ describe("V2MemoryEngine", () => {
 
       writeFileSync(
         join(codexDir, "codex-session.jsonl"),
-        JSON.stringify({
-          type: "event_msg",
-          timestamp: "2026-05-20T20:00:04.000Z",
-          payload: {
-            type: "task_complete",
-            turn_id: "codex-turn-1",
-            last_agent_message: "Codex completed the ingestion bridge.",
-          },
-        }),
+        [
+          JSON.stringify({
+            type: "session_meta",
+            payload: {
+              id: "codex-session",
+              model: "gpt-5-codex",
+              cwd: "/workspace/retentia",
+              approval_policy: "never",
+              sandbox_mode: "danger-full-access",
+            },
+          }),
+          JSON.stringify({
+            type: "event_msg",
+            timestamp: "2026-05-20T20:00:04.000Z",
+            payload: {
+              type: "task_complete",
+              turn_id: "codex-turn-1",
+              last_agent_message: "Codex completed the ingestion bridge.",
+            },
+          }),
+        ].join("\n"),
       );
 
       writeFileSync(
@@ -256,8 +274,17 @@ describe("V2MemoryEngine", () => {
             timestamp: "2026-05-20T20:00:05.000Z",
             sessionId: "claude-session",
             cwd: "/workspace/retentia",
+            uuid: "claude-uuid-1",
+            parentUuid: "claude-parent-uuid-1",
+            version: "1.2.3",
+            permissionMode: "acceptEdits",
             message: {
+              id: "claude-message-1",
               model: "claude-code",
+              usage: {
+                input_tokens: 12,
+                output_tokens: 34,
+              },
               content: [
                 {
                   type: "tool_use",
@@ -325,6 +352,38 @@ describe("V2MemoryEngine", () => {
           dashboard.tasks.find((task) => task.source === "claude-code")
             ?.description,
         ).toContain("Check Copilot");
+        expect(dashboard.trends.daily[dashboard.trends.daily.length - 1]).toMatchObject({
+          key: "2026-05-20",
+          count: 3,
+          completed: 3,
+        });
+        expect(dashboard.trends.weekly[dashboard.trends.weekly.length - 1]?.count).toBe(3);
+
+        const copilotPayload = dashboard.recentEvents.find(
+          (event) => event.source === "copilot" && event.type === "task_started",
+        )?.payload as Record<string, unknown> | undefined;
+        expect(copilotPayload?.metadata).toMatchObject({
+          model: "gpt-4.1",
+          conversationId: "copilot-conversation-1",
+          requestId: "copilot-request-1",
+        });
+
+        const codexPayload = dashboard.recentEvents.find(
+          (event) => event.source === "codex",
+        )?.payload as Record<string, unknown> | undefined;
+        expect(codexPayload?.metadata).toMatchObject({
+          model: "gpt-5-codex",
+          cwd: "/workspace/retentia",
+        });
+
+        const claudePayload = dashboard.recentEvents.find(
+          (event) => event.source === "claude-code" && event.type === "task_started",
+        )?.payload as Record<string, unknown> | undefined;
+        expect(claudePayload?.metadata).toMatchObject({
+          uuid: "claude-uuid-1",
+          permissionMode: "acceptEdits",
+          messageId: "claude-message-1",
+        });
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

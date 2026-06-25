@@ -9,6 +9,7 @@ import type {
   V2DashboardActivity,
   V2DashboardAgent,
   V2DashboardData,
+  V2DashboardQuality,
   V2DashboardTask,
   V2DashboardTrends,
   V2Event,
@@ -103,6 +104,26 @@ interface EventImportRow {
   event_id: number;
   source: string;
   imported_at: string;
+}
+
+interface DashboardMemoryStatsRow {
+  activeMemoryTotal: number;
+  averageConfidence: number | null;
+  highConfidence: number | null;
+  lowConfidence: number | null;
+  pinnedTotal: number | null;
+  staleMemories: number | null;
+  lastMemoryUpdatedAt: string | null;
+}
+
+interface DashboardEvidenceStatsRow {
+  evidenceChunks: number;
+  lastEvidenceCreatedAt: string | null;
+}
+
+interface DashboardCountRow {
+  key: string;
+  count: number;
 }
 
 interface ExecutionTrendTask {
@@ -671,6 +692,7 @@ export class V2MemoryEngine {
     const trends = buildExecutionTrends(trendEvents);
     const agents = buildAgents(recentEvents, tasks);
     const activities = buildActivities(recentEvents);
+    const quality = this.buildDashboardQuality(memories.length);
     const projects = new Set([
       ...recentEvents.map((event) => event.project).filter(Boolean),
       ...memories.map((memory) => memory.project).filter(Boolean),
@@ -691,6 +713,7 @@ export class V2MemoryEngine {
       agents,
       tasks,
       trends,
+      quality,
       activities,
       memories,
       edges,
@@ -700,6 +723,68 @@ export class V2MemoryEngine {
         maxChars: 900,
         limit: 6,
       }),
+    };
+  }
+
+  private buildDashboardQuality(sampleSize: number): V2DashboardQuality {
+    const staleCutoff = new Date(Date.now() - 90 * DAY_MS).toISOString();
+    const memoryTotal = countRows(this.db, "memories");
+    const memoryStats = this.db
+      .prepare(
+        `SELECT
+           COUNT(*) AS activeMemoryTotal,
+           AVG(confidence) AS averageConfidence,
+           SUM(CASE WHEN confidence >= 0.8 THEN 1 ELSE 0 END) AS highConfidence,
+           SUM(CASE WHEN confidence < 0.6 THEN 1 ELSE 0 END) AS lowConfidence,
+           SUM(CASE WHEN pinned = 1 THEN 1 ELSE 0 END) AS pinnedTotal,
+           SUM(CASE WHEN updated_at < ? THEN 1 ELSE 0 END) AS staleMemories,
+           MAX(updated_at) AS lastMemoryUpdatedAt
+         FROM memories
+         WHERE archived = 0`,
+      )
+      .get(staleCutoff) as DashboardMemoryStatsRow;
+    const evidenceStats = this.db
+      .prepare(
+        `SELECT
+           COUNT(*) AS evidenceChunks,
+           MAX(created_at) AS lastEvidenceCreatedAt
+         FROM evidence_chunks`,
+      )
+      .get() as DashboardEvidenceStatsRow;
+    const kindCounts = this.db
+      .prepare(
+        `SELECT kind AS key, COUNT(*) AS count
+         FROM memories
+         WHERE archived = 0
+         GROUP BY kind
+         ORDER BY count DESC, kind ASC`,
+      )
+      .all() as DashboardCountRow[];
+
+    const activeMemoryTotal = Number(memoryStats.activeMemoryTotal || 0);
+    const evidenceChunks = Number(evidenceStats.evidenceChunks || 0);
+    const evidenceCoverage =
+      activeMemoryTotal > 0 && evidenceChunks > 0
+        ? evidenceChunks / activeMemoryTotal
+        : null;
+
+    return {
+      memoryTotal,
+      activeMemoryTotal,
+      sampleSize,
+      averageConfidence: Number(memoryStats.averageConfidence || 0),
+      highConfidence: Number(memoryStats.highConfidence || 0),
+      lowConfidence: Number(memoryStats.lowConfidence || 0),
+      pinnedTotal: Number(memoryStats.pinnedTotal || 0),
+      evidenceChunks,
+      evidenceCoverage,
+      staleMemories: Number(memoryStats.staleMemories || 0),
+      lastMemoryUpdatedAt: memoryStats.lastMemoryUpdatedAt || undefined,
+      lastEvidenceCreatedAt: evidenceStats.lastEvidenceCreatedAt || undefined,
+      kindCounts: kindCounts.map((row) => ({
+        key: row.key,
+        count: Number(row.count || 0),
+      })),
     };
   }
 

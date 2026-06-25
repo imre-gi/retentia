@@ -1071,6 +1071,19 @@ function createEmptyAgentDashboardData(error?: string): JsonResult {
     activities: [],
     recentEvents: [],
     contextPreview: { text: "", usedChars: 0, maxChars: 0, memoryIds: [] },
+    quality: {
+      memoryTotal: 0,
+      activeMemoryTotal: 0,
+      sampleSize: 0,
+      averageConfidence: 0,
+      highConfidence: 0,
+      lowConfidence: 0,
+      pinnedTotal: 0,
+      evidenceChunks: 0,
+      evidenceCoverage: null,
+      staleMemories: 0,
+      kindCounts: [],
+    },
     health: {
       status: error ? "fail" : "warn",
       ok: false,
@@ -1343,7 +1356,7 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       * { box-sizing: border-box; }
       html, body { min-height: 100%; }
       body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); }
-      .shell { min-height: 100vh; padding: 14px; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 10px; }
+      .shell { min-height: 100vh; padding: 14px; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 10px; }
       .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid var(--line-soft); background: var(--bg-2); border-radius: 8px; padding: 10px 12px; }
       h1 { margin: 0; font-size: 18px; font-weight: 720; letter-spacing: 0; }
       .sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
@@ -1355,13 +1368,14 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .tab.active { color: var(--text); border-color: var(--blue); background: color-mix(in oklch, var(--blue), transparent 82%); }
       .live { display: inline-flex; align-items: center; gap: 7px; color: var(--green); font-size: 12px; min-height: 30px; }
       .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--green); box-shadow: 0 0 0 5px color-mix(in oklch, var(--green), transparent 84%); }
-      .metrics { display: grid; grid-template-columns: repeat(7, minmax(92px, 1fr)); gap: 8px; }
+      #dashboardError:empty { display: none; }
+      .metrics { display: grid; grid-template-columns: repeat(7, minmax(92px, 1fr)); grid-auto-rows: 56px; gap: 8px; align-self: start; }
       .metric, .panel, .map-panel, .inspector { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; }
-      .metric { padding: 8px 10px; min-width: 0; }
+      .metric { padding: 8px 10px; min-width: 0; height: 56px; display: grid; align-content: start; overflow: hidden; }
       .k { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
       .v { font-size: 18px; font-weight: 760; margin-top: 3px; }
       .insight-plane { min-height: 0; overflow: auto; display: grid; gap: 10px; }
-      .insight-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+      .insight-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 76px; gap: 10px; }
       .wide-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 10px; }
       .trend-plane { padding: 10px 12px; display: grid; gap: 10px; }
       .trend-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
@@ -1402,8 +1416,10 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .health-item { border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-width: 0; }
       .health-item strong { display: block; font-size: 12px; margin-bottom: 4px; }
       .stat-tile { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 10px 12px; min-width: 0; display: grid; gap: 4px; }
+      .insight-grid .stat-tile { height: 76px; align-content: start; overflow: hidden; }
       .stat-tile strong { font-size: 20px; line-height: 1.15; }
       .stat-tile span { color: var(--muted); font-size: 12px; }
+      .insight-grid .stat-tile strong, .insight-grid .stat-tile span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .stat-tile.good strong { color: var(--green); }
       .stat-tile.warn strong { color: var(--amber); }
       .stat-tile.bad strong { color: var(--red); }
@@ -1433,7 +1449,7 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
     <main class="shell">
       <div class="top">
         <div><h1>Retentia Control Plane</h1><div id="dashboardSubtitle" class="sub">${loading ? "Waiting for Retentia v2 stream" : "Retentia v2 stream"}</div></div>
-        <div class="actions"><button class="tab active" data-view="control">Control</button><button class="tab" data-view="memory">Memory</button><button class="tab" data-view="quality">Quality</button><button class="tab" data-view="operations">Operations</button><span id="streamState" class="live"><span class="dot"></span>Connecting</span><button data-command="refresh">Refresh</button><button data-command="doctor">Doctor</button><button data-command="setup">Install MCP</button></div>
+        <div class="actions"><button class="tab active" data-view="control">Control</button><button class="tab" data-view="memory">Memory</button><button class="tab" data-view="quality">Retrieval</button><button class="tab" data-view="operations">Operations</button><span id="streamState" class="live"><span class="dot"></span>Connecting</span><button data-command="refresh">Refresh</button><button data-command="doctor">Doctor</button><button data-command="setup">Install MCP</button></div>
       </div>
       <div id="dashboardError"></div>
       <section id="metricStrip" class="metrics"></section>
@@ -1548,6 +1564,7 @@ function buildAgentDashboardPayload(
   const edges = arrayOfRecords(data.edges);
   const trends = toRecord(data.trends);
   const contextPreview = toRecord(data.contextPreview);
+  const quality = toRecord(data.quality);
   const health = toRecord(data.health);
   const graphNodes = buildGraphNodes(agents, tasks, memories);
   const activeTasks = tasks.filter(
@@ -1582,7 +1599,13 @@ function buildAgentDashboardPayload(
     graphHtml: renderAgentGraphSvg(graphNodes, edges, tasks),
     inspectorHtml: renderInspector(tasks, agents, activities, contextPreview),
     memoryHtml: renderMemoryPlane(memories, contextPreview),
-    qualityHtml: renderQualityPlane(health, memories, contextPreview, totals),
+    qualityHtml: renderQualityPlane(
+      health,
+      memories,
+      contextPreview,
+      totals,
+      quality,
+    ),
     operationsHtml: renderOperationsPlane(
       trends,
       agents,
@@ -1679,6 +1702,44 @@ function formatDelta(value: number): string {
   return String(value);
 }
 
+function formatRelativeTime(value: string | undefined): string {
+  if (!value) {
+    return "n/a";
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    return value;
+  }
+
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - parsed) / 1000));
+  if (elapsedSeconds < 60) {
+    return "just now";
+  }
+
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  if (elapsedMinutes < 60) {
+    return `${elapsedMinutes}m ago`;
+  }
+
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 48) {
+    return `${elapsedHours}h ago`;
+  }
+
+  const elapsedDays = Math.floor(elapsedHours / 24);
+  return `${elapsedDays}d ago`;
+}
+
+function mapNumberList(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter(
+    (item): item is number => typeof item === "number" && Number.isFinite(item),
+  );
+}
+
 interface DashboardDistributionItem {
   label: string;
   value: number;
@@ -1690,34 +1751,65 @@ function renderQualityPlane(
   memories: JsonResult[],
   contextPreview: JsonResult,
   totals: JsonResult,
+  quality: JsonResult,
 ): string {
-  const totalMemories = toNumber(totals.memories) ?? memories.length;
-  const evidenceTotal = toNumber(totals.evidenceChunks) ?? 0;
-  const pinned = memories.filter((memory) => toBoolean(memory.pinned)).length;
-  const averageConfidence = getAverageConfidence(memories);
-  const highConfidence = memories.filter(
+  const sampleHighConfidence = memories.filter(
     (memory) => (toNumber(memory.confidence) ?? 0) >= 0.8,
   ).length;
-  const confidenceRatio = memories.length > 0 ? highConfidence / memories.length : 0;
-  const evidencePerMemory =
-    totalMemories > 0 ? evidenceTotal / totalMemories : 0;
+  const sampleLowConfidence = memories.filter(
+    (memory) => (toNumber(memory.confidence) ?? 0) < 0.6,
+  ).length;
+  const memoryTotal = toNumber(quality.memoryTotal) ?? toNumber(totals.memories) ?? memories.length;
+  const activeMemoryTotal = toNumber(quality.activeMemoryTotal) ?? memoryTotal;
+  const sampleSize = toNumber(quality.sampleSize) ?? memories.length;
+  const averageConfidence =
+    toNumber(quality.averageConfidence) ?? getAverageConfidence(memories);
+  const highConfidence = toNumber(quality.highConfidence) ?? sampleHighConfidence;
+  const lowConfidence = toNumber(quality.lowConfidence) ?? sampleLowConfidence;
+  const pinnedTotal =
+    toNumber(quality.pinnedTotal) ??
+    memories.filter((memory) => toBoolean(memory.pinned)).length;
+  const evidenceTotal =
+    toNumber(quality.evidenceChunks) ?? toNumber(totals.evidenceChunks) ?? 0;
+  const evidenceCoverage = toNumber(quality.evidenceCoverage);
+  const staleMemories = toNumber(quality.staleMemories) ?? 0;
   const usedChars = toNumber(contextPreview.usedChars) ?? 0;
   const maxChars = toNumber(contextPreview.maxChars) ?? 0;
   const contextRatio = maxChars > 0 ? usedChars / maxChars : 0;
+  const contextMemoryCount = mapNumberList(contextPreview.memoryIds).length;
+  const lastMemoryUpdatedAt = toText(quality.lastMemoryUpdatedAt);
+  const lastEvidenceCreatedAt = toText(quality.lastEvidenceCreatedAt);
+  const evidenceValue =
+    evidenceCoverage === undefined
+      ? "Store empty"
+      : `${evidenceCoverage.toFixed(1)}x`;
+  const evidenceDetail =
+    evidenceCoverage === undefined
+      ? "No evidence chunks have been linked yet"
+      : `${evidenceTotal} chunks across ${activeMemoryTotal} active memories`;
+  const activeDetail =
+    activeMemoryTotal === memoryTotal
+      ? `${sampleSize} shown in current dashboard sample`
+      : `${activeMemoryTotal} active, ${memoryTotal} total`;
+  const kindCounts = distributionFromCounts(quality.kindCounts);
 
   return `
     <div class="insight-grid">
-      ${renderInsightMetric("Confidence", formatPercent(averageConfidence), `${highConfidence} high confidence memories in current sample`, toneForRatio(confidenceRatio, 0.6, 0.35))}
-      ${renderInsightMetric("Evidence coverage", `${evidencePerMemory.toFixed(1)}x`, `${evidenceTotal} evidence chunks across ${totalMemories} memories`, evidencePerMemory >= 1 ? "good" : evidenceTotal > 0 ? "warn" : "bad")}
-      ${renderInsightMetric("Pinned context", String(pinned), "Pinned memories are retrieval anchors", pinned > 0 ? "good" : "warn")}
+      ${renderInsightMetric("Memories", String(activeMemoryTotal), activeDetail, activeMemoryTotal > 0 ? "good" : "warn")}
+      ${renderInsightMetric("Needs review", String(lowConfidence), "Confidence below 60%", lowConfidence === 0 ? "good" : lowConfidence < Math.max(5, activeMemoryTotal * 0.08) ? "warn" : "bad")}
+      ${renderInsightMetric("Linked evidence", evidenceValue, evidenceDetail, evidenceCoverage === undefined ? "warn" : evidenceCoverage >= 1 ? "good" : "warn")}
+      ${renderInsightMetric("Pinned memories", String(pinnedTotal), "Favored during retrieval", pinnedTotal > 0 ? "good" : "warn")}
+      ${renderInsightMetric("Last update", formatRelativeTime(lastMemoryUpdatedAt), lastMemoryUpdatedAt ? formatIsoCompact(lastMemoryUpdatedAt) : "No durable memory yet", lastMemoryUpdatedAt ? "good" : "warn")}
+      ${renderInsightMetric("Stale memories", String(staleMemories), "Not updated in 90 days", staleMemories === 0 ? "good" : "warn")}
     </div>
     <div class="wide-grid">
       <section class="stat-panel">
-        <div class="panel-head"><h2>Retrieval Quality</h2><span class="muted">${memories.length} sampled memories</span></div>
+        <div class="panel-head"><h2>Retrieval Snapshot</h2><span class="muted">${sampleSize} shown, ${contextMemoryCount} in preview</span></div>
         <div class="stat-body">
-          ${renderMeter("Context budget", contextRatio, `${usedChars} of ${maxChars || "n/a"} characters used`, toneForCeiling(contextRatio, 0.72, 0.9))}
-          ${renderMeter("High confidence sample", confidenceRatio, `${highConfidence} of ${memories.length} sampled memories`, toneForRatio(confidenceRatio, 0.6, 0.35))}
-          ${renderDistribution("Memory kinds", countByField(memories, "kind"), "No memory-kind data yet.")}
+          ${renderMeter("Avg memory confidence", averageConfidence, `${highConfidence} high confidence, ${lowConfidence} need review`, toneForRatio(averageConfidence, 0.75, 0.55))}
+          ${renderMeter("Preview size", contextRatio, `${contextMemoryCount} memories, ${usedChars} of ${maxChars || "n/a"} characters`, toneForCeiling(contextRatio, 0.72, 0.9))}
+          ${renderDistribution("Memory kinds", kindCounts.length ? kindCounts : countByField(memories, "kind"), "No active memories yet.")}
+          <div class="muted">Evidence store: ${escapeHtml(evidenceTotal > 0 ? `${evidenceTotal} chunks, latest ${formatIsoCompact(lastEvidenceCreatedAt)}` : "empty, no linked source material")}</div>
         </div>
       </section>
       <section class="panel health-plane">${renderHealthPlane(health)}</section>
@@ -1850,6 +1942,24 @@ function countByField(
   }
   return sortDistribution(
     Array.from(counts, ([label, value]) => ({ label, value })),
+  );
+}
+
+function distributionFromCounts(value: unknown): DashboardDistributionItem[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return sortDistribution(
+    value.map((item) => {
+      const record = toRecord(item);
+      const label = toText(record.key) || "unknown";
+      const count = toNumber(record.count) ?? 0;
+      return {
+        label,
+        value: count,
+      };
+    }),
   );
 }
 

@@ -288,21 +288,38 @@ export interface V2DashboardTrends {
   weekly: V2TrendBucket[];
 }
 
+export interface V2DashboardQuality {
+  memoryTotal: number;
+  activeMemoryTotal: number;
+  sampleSize: number;
+  averageConfidence: number;
+  highConfidence: number;
+  lowConfidence: number;
+  pinnedTotal: number;
+  evidenceChunks: number;
+  evidenceCoverage: number | null;
+  staleMemories: number;
+  lastMemoryUpdatedAt?: string;
+  lastEvidenceCreatedAt?: string;
+  kindCounts: Array<{ key: string; count: number }>;
+}
+
 export interface V2DashboardData {
   generatedAt: string;
   dataFile: string;
   totals: {
     events: number;
     memories: number;
-      graphEdges: number;
-      evidenceChunks: number;
-      agents: number;
+    graphEdges: number;
+    evidenceChunks: number;
+    agents: number;
     tasks: number;
     projects: number;
   };
   agents: V2DashboardAgent[];
   tasks: V2DashboardTask[];
   trends: V2DashboardTrends;
+  quality: V2DashboardQuality;
   activities: V2DashboardActivity[];
   memories: V2Memory[];
   edges: V2GraphEdge[];

@@ -257,6 +257,15 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("retentia.doctor", async () => {
+      const report = await runCliJson(["doctor"]);
+      await openJsonDocument(report, "retentia-doctor.json");
+      const status = toText(toRecord(report).status) || "unknown";
+      vscode.window.showInformationMessage(`Retentia doctor: ${status}`);
+    }),
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand("retentia.projectExplorer", async () => {
       await vscode.commands.executeCommand("retentia.statusDashboard");
     }),
@@ -312,6 +321,12 @@ export function activate(context: vscode.ExtensionContext): void {
               vscode.window.showInformationMessage(
                 `LLM task sync complete. Imported ${metrics.importedTasks} task(s).`,
               );
+              await renderDashboardPanel(dashboardPanel);
+              return;
+            }
+
+            if (cmd === "doctor") {
+              await vscode.commands.executeCommand("retentia.doctor");
               await renderDashboardPanel(dashboardPanel);
               return;
             }
@@ -648,6 +663,12 @@ class QuickInputSidebarProvider implements vscode.WebviewViewProvider {
         vscode.window.showInformationMessage(
           `LLM task sync complete. Imported ${metrics.importedTasks} of ${metrics.detectedTasks} detected tasks.`,
         );
+        await this.refreshStatus();
+        return;
+      }
+
+      if (command === "doctor") {
+        await vscode.commands.executeCommand("retentia.doctor");
         await this.refreshStatus();
         return;
       }
@@ -1019,13 +1040,15 @@ async function pushDashboardPanelUpdate(
 
 async function collectAgentDashboardData(): Promise<JsonResult> {
   await syncTaskExecutions({ force: false });
-  return toRecord(
+  const dashboard = toRecord(
     await runCliJson([
       "dashboard",
       "--limit",
       String(getExecutionReportLimit()),
     ]),
   );
+  const health = toRecord(await runCliJson(["doctor"]));
+  return { ...dashboard, health };
 }
 
 function createEmptyAgentDashboardData(error?: string): JsonResult {
@@ -1036,6 +1059,7 @@ function createEmptyAgentDashboardData(error?: string): JsonResult {
       events: 0,
       memories: 0,
       graphEdges: 0,
+      evidenceChunks: 0,
       agents: 0,
       tasks: 0,
       projects: 0,
@@ -1047,6 +1071,11 @@ function createEmptyAgentDashboardData(error?: string): JsonResult {
     activities: [],
     recentEvents: [],
     contextPreview: { text: "", usedChars: 0, maxChars: 0, memoryIds: [] },
+    health: {
+      status: error ? "fail" : "warn",
+      ok: false,
+      checks: [],
+    },
     error,
   };
 }
@@ -1358,7 +1387,13 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .state-active { color: var(--green); border-color: color-mix(in oklch, var(--green), transparent 35%); }
       .state-completed { color: var(--blue); border-color: color-mix(in oklch, var(--blue), transparent 35%); }
       .state-failed { color: var(--red); border-color: color-mix(in oklch, var(--red), transparent 35%); }
+      .state-pass { color: var(--green); border-color: color-mix(in oklch, var(--green), transparent 35%); }
+      .state-warn { color: var(--amber); border-color: color-mix(in oklch, var(--amber), transparent 35%); }
       .reasoning, .context { white-space: pre-wrap; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; line-height: 1.45; }
+      .health-plane { padding: 10px 12px; display: grid; gap: 8px; }
+      .health-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+      .health-item { border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-width: 0; }
+      .health-item strong { display: block; font-size: 12px; margin-bottom: 4px; }
       .memory-plane { min-height: 0; overflow: auto; padding: 12px; }
       .hidden { display: none; }
       .error { border: 1px solid var(--red); color: var(--red); padding: 10px; border-radius: 8px; margin-bottom: 12px; }
@@ -1369,10 +1404,11 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
     <main class="shell">
       <div class="top">
         <div><h1>Retentia Control Plane</h1><div id="dashboardSubtitle" class="sub">${loading ? "Waiting for Retentia v2 stream" : "Retentia v2 stream"}</div></div>
-        <div class="actions"><button class="tab active" data-view="control">Control</button><button class="tab" data-view="memory">Memory</button><span id="streamState" class="live"><span class="dot"></span>Connecting</span><button data-command="refresh">Refresh</button><button data-command="setup">Install MCP</button></div>
+        <div class="actions"><button class="tab active" data-view="control">Control</button><button class="tab" data-view="memory">Memory</button><span id="streamState" class="live"><span class="dot"></span>Connecting</span><button data-command="refresh">Refresh</button><button data-command="doctor">Doctor</button><button data-command="setup">Install MCP</button></div>
       </div>
       <div id="dashboardError"></div>
       <section id="metricStrip" class="metrics"></section>
+      <section id="healthPlane" class="panel health-plane"></section>
       <section id="trendPlane" class="panel trend-plane"></section>
       <section id="controlPlane" class="workbench">
         <div class="map-panel"><div class="panel-head"><h2>Agent Task Map</h2><span class="muted">Select latest active task in inspector</span></div><div id="graph" class="graph"></div></div>
@@ -1451,6 +1487,7 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
         if (updated) updated.textContent = String(payload.updatedAt || "n/a");
         setHtml("dashboardError", payload.errorHtml);
         setHtml("metricStrip", payload.metricsHtml);
+        setHtml("healthPlane", payload.healthHtml);
         setHtml("trendPlane", payload.trendHtml);
         setHtml("graph", payload.graphHtml);
         setHtml("inspectorBody", payload.inspectorHtml);
@@ -1478,6 +1515,7 @@ function buildAgentDashboardPayload(
   const edges = arrayOfRecords(data.edges);
   const trends = toRecord(data.trends);
   const contextPreview = toRecord(data.contextPreview);
+  const health = toRecord(data.health);
   const graphNodes = buildGraphNodes(agents, tasks, memories);
   const activeTasks = tasks.filter(
     (task) => (toText(task.status) || "active") === "active",
@@ -1492,6 +1530,7 @@ function buildAgentDashboardPayload(
       toNumber(totals.tasks) ?? 0,
       activities[0] ? toText(activities[0].id) : "0",
       JSON.stringify(trends),
+      toText(health.status),
     ].join(":"),
     subtitle: `${toText(data.dataFile) || "n/a"} / ${formatIso(generatedAt)}`,
     updatedAt: formatIsoCompact(generatedAt),
@@ -1503,7 +1542,9 @@ function buildAgentDashboardPayload(
       metric("Tasks", toNumber(totals.tasks) ?? tasks.length),
       metric("Activity", activities.length),
       metric("Relations", edges.length),
+      metric("Evidence", toNumber(totals.evidenceChunks) ?? 0),
     ].join(""),
+    healthHtml: renderHealthPlane(health),
     trendHtml: renderTrendPlane(trends),
     graphHtml: renderAgentGraphSvg(graphNodes, edges, tasks),
     inspectorHtml: renderInspector(tasks, agents, activities, contextPreview),
@@ -1511,6 +1552,29 @@ function buildAgentDashboardPayload(
     detailsByNode: buildNodeDetails(tasks, agents, activities, contextPreview),
     defaultNodeId: focusTask ? `task:${toText(focusTask.id)}` : "",
   };
+}
+
+function renderHealthPlane(health: JsonResult): string {
+  const status = toText(health.status) || "unknown";
+  const checks = arrayOfRecords(health.checks).slice(0, 6);
+  const rows = checks.length
+    ? checks
+        .map((check) => {
+          const checkStatus = toText(check.status) || "warn";
+          return `
+            <div class="health-item">
+              <strong>${escapeHtml(toText(check.name) || "check")}</strong>
+              <span class="state state-${escapeHtml(checkStatus)}">${escapeHtml(checkStatus)}</span>
+              <div class="muted">${escapeHtml(toText(check.summary) || "")}</div>
+            </div>`;
+        })
+        .join("")
+    : `<div class="muted">No doctor checks available.</div>`;
+
+  return `
+    <div class="panel-head"><h2>Setup Health</h2><span class="state state-${escapeHtml(status)}">${escapeHtml(status)}</span></div>
+    <div class="health-list">${rows}</div>
+  `;
 }
 
 function renderTrendPlane(trends: JsonResult): string {
@@ -2773,6 +2837,7 @@ function getQuickInputSidebarHtml(): string {
         <button data-action="refresh-status">Refresh</button>
         <button data-action="open-dashboard">Dashboard</button>
         <button class="primary" data-action="setup">Setup</button>
+        <button data-action="doctor">Doctor</button>
         <button data-action="sync-tasks">Sync Tasks</button>
         <button data-action="open-settings">Settings</button>
       </div>

@@ -39,6 +39,10 @@
                 "title": "Retentia: Import Copilot, Codex, and Claude Code Tasks"
             },
             {
+                "command": "retentia.doctor",
+                "title": "Retentia: Run Doctor"
+            },
+            {
                 "command": "retentia.projectExplorer",
                 "title": "Retentia: Agent Command Center"
             },

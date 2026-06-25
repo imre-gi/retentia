@@ -941,11 +941,14 @@ function resolveNodeCommand(): string {
 }
 
 function getAutoDetectCandidates(workspaceRoot: string): string[] {
+  const checkoutNames = ["retentia", "codex-mem"];
   const candidates = [
     join(workspaceRoot, "..", "dist", "cli.js"),
-    join(workspaceRoot, "retentia", "dist", "cli.js"),
-    join(workspaceRoot, "..", "retentia", "dist", "cli.js"),
-    join(workspaceRoot, "..", "..", "retentia", "dist", "cli.js"),
+    ...checkoutNames.flatMap((checkoutName) => [
+      join(workspaceRoot, checkoutName, "dist", "cli.js"),
+      join(workspaceRoot, "..", checkoutName, "dist", "cli.js"),
+      join(workspaceRoot, "..", "..", checkoutName, "dist", "cli.js"),
+    ]),
   ];
 
   return [...new Set(candidates)];

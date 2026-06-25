@@ -7,7 +7,11 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { getV2DataFilePath } from "./v2-config.js";
 import { V2MemoryEngine } from "./v2-engine.js";
-import type { V2ContextMode, V2MemoryKind } from "./v2-types.js";
+import type {
+  V2ContextMode,
+  V2MemoryKind,
+  V2RetrievalMode,
+} from "./v2-types.js";
 
 const MCP_SERVER_NAME = "retentia";
 const MEMORY_KINDS: V2MemoryKind[] = [
@@ -102,6 +106,8 @@ export async function startV2McpServer(
             kind: { type: "string", enum: MEMORY_KINDS },
             tags: { type: "array", items: { type: "string" } },
             limit: { type: "number" },
+            retrieval: { type: "string", enum: ["fts", "hybrid"] },
+            explain: { type: "boolean" },
           },
         },
       },
@@ -271,6 +277,8 @@ async function handleToolCall(
             kind: getOptionalMemoryKind(args),
             tags: getStringArray(args, "tags"),
             limit: getNumber(args, "limit"),
+            retrieval: getOptionalRetrievalMode(args),
+            explain: getBoolean(args, "explain"),
           }),
         );
 
@@ -469,4 +477,17 @@ function getOptionalContextMode(
     throw new Error(`mode must be one of: ${CONTEXT_MODES.join(", ")}`);
   }
   return raw as V2ContextMode;
+}
+
+function getOptionalRetrievalMode(
+  args: Record<string, unknown>,
+): V2RetrievalMode | undefined {
+  const raw = getString(args, "retrieval", false);
+  if (!raw) {
+    return undefined;
+  }
+  if (raw !== "fts" && raw !== "hybrid") {
+    throw new Error("retrieval must be one of: fts, hybrid");
+  }
+  return raw;
 }

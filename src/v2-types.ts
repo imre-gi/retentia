@@ -24,6 +24,8 @@ export type V2ContextMode = "ids" | "brief" | "task-primer" | "full-evidence";
 
 export type V2HealthStatus = "pass" | "warn" | "fail";
 
+export type V2RetrievalMode = "fts" | "hybrid";
+
 export interface V2EventInput {
   type: V2EventType | string;
   source: string;
@@ -141,6 +143,20 @@ export interface V2SearchOptions {
   kind?: V2MemoryKind;
   tags?: string[];
   limit?: number;
+  retrieval?: V2RetrievalMode;
+  explain?: boolean;
+}
+
+export interface V2SearchExplanation {
+  retrieval: V2RetrievalMode;
+  lexicalScore: number;
+  confidenceBoost: number;
+  pinnedBoost: number;
+  recencyBoost: number;
+  graphBoost: number;
+  evidenceBoost: number;
+  totalScore: number;
+  signals: string[];
 }
 
 export interface V2SearchResult {
@@ -154,6 +170,8 @@ export interface V2SearchResult {
   pinned: boolean;
   score: number;
   createdAt: string;
+  updatedAt: string;
+  explanation?: V2SearchExplanation;
 }
 
 export interface V2ContextOptions extends V2SearchOptions {

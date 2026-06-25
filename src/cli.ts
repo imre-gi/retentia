@@ -10,7 +10,11 @@ import { getV2DataFilePath } from "./v2-config.js";
 import { V2MemoryEngine } from "./v2-engine.js";
 import { startV2McpServer } from "./v2-mcp-server.js";
 import { ingestV2TaskEvents } from "./v2-task-ingest.js";
-import type { V2ContextMode, V2MemoryKind } from "./v2-types.js";
+import type {
+  V2ContextMode,
+  V2MemoryKind,
+  V2RetrievalMode,
+} from "./v2-types.js";
 import { startWorkerService } from "./worker-service.js";
 import { WorkerManager } from "./worker-manager.js";
 import {
@@ -278,6 +282,8 @@ async function handleV2Command(
           kind: getOptionalV2MemoryKind(parsed.options.kind),
           tags: getCsvList(parsed.options.tags),
           limit: getOptionalNumber(parsed.options.limit),
+          retrieval: getOptionalV2RetrievalMode(parsed.options.retrieval),
+          explain: Boolean(parsed.options.explain),
         });
         printJson({ total: results.length, results });
         return;
@@ -678,6 +684,19 @@ function getOptionalV2ContextMode(
   return normalized as V2ContextMode;
 }
 
+function getOptionalV2RetrievalMode(
+  value: string | boolean | undefined,
+): V2RetrievalMode | undefined {
+  const normalized = getOptionalString(value);
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized !== "fts" && normalized !== "hybrid") {
+    throw new Error("--retrieval must be one of: fts, hybrid");
+  }
+  return normalized;
+}
+
 function parseJsonOption(
   value: string | boolean | undefined,
 ): unknown | undefined {
@@ -707,7 +726,7 @@ function printV2Help(): void {
     `  ${APP_NAME} v2 memory --kind <kind> --title <text> --body <text> [--tags <a,b>] [--pinned]`,
     `  ${APP_NAME} v2 evidence --source-type <type> --source-id <id> --content <text> [--uri <path>]`,
     `  ${APP_NAME} v2 evidence-search [--query <text>] [--source-type <type>] [--source-id <id>]`,
-    `  ${APP_NAME} v2 search [--query <text>] [--project <name>] [--kind <kind>] [--tags <a,b>]`,
+    `  ${APP_NAME} v2 search [--query <text>] [--project <name>] [--kind <kind>] [--tags <a,b>] [--retrieval fts|hybrid] [--explain]`,
     `  ${APP_NAME} v2 context [--query <text>] [--mode ids|brief|task-primer|full-evidence] [--max-chars <n>]`,
     `  ${APP_NAME} v2 edge --from-type <type> --from-id <id> --to-type <type> --to-id <id> --relation <name>`,
     `  ${APP_NAME} v2 graph --node-type <type> --node-id <id>`,
@@ -1217,7 +1236,7 @@ function printHelp(): void {
     `  ${APP_NAME} memory --kind <kind> --title <text> --body <text> [--tags <a,b>]`,
     `  ${APP_NAME} evidence --source-type <type> --source-id <id> --content <text> [--uri <path>]`,
     `  ${APP_NAME} evidence-search [--query <text>] [--source-type <type>] [--source-id <id>]`,
-    `  ${APP_NAME} search [--query <text>] [--project <name>] [--kind <kind>]`,
+    `  ${APP_NAME} search [--query <text>] [--project <name>] [--kind <kind>] [--retrieval fts|hybrid] [--explain]`,
     `  ${APP_NAME} context [--query <text>] [--mode ids|brief|task-primer|full-evidence] [--max-chars <n>]`,
     `  ${APP_NAME} edge --from-type <type> --from-id <id> --to-type <type> --to-id <id> --relation <name>`,
     `  ${APP_NAME} graph --node-type <type> --node-id <id>`,

@@ -148,6 +148,38 @@ describe("V2MemoryEngine", () => {
     });
   });
 
+  test("explains hybrid retrieval boosts from graph and evidence", () => {
+    withEngine((engine) => {
+      const memory = engine.addMemory({
+        kind: "decision",
+        project: "retentia",
+        title: "Hybrid retrieval needs evidence boosts",
+        body: "Evidence-linked memories should rank higher when the lexical match is comparable.",
+        tags: ["retrieval"],
+        confidence: 0.8,
+      });
+      engine.addEvidence({
+        sourceType: "memory",
+        sourceId: String(memory.id),
+        project: "retentia",
+        content: "The benchmark showed evidence-linked retrieval improved recall.",
+      });
+
+      const results = engine.search({
+        query: "evidence retrieval",
+        project: "retentia",
+        retrieval: "hybrid",
+        explain: true,
+      });
+
+      expect(results[0]?.id).toBe(memory.id);
+      expect(results[0]?.explanation?.retrieval).toBe("hybrid");
+      expect(results[0]?.explanation?.evidenceBoost).toBeGreaterThan(0);
+      expect(results[0]?.explanation?.graphBoost).toBeGreaterThan(0);
+      expect(results[0]?.score).toBeGreaterThan(100);
+    });
+  });
+
   test("lists graph edges around an agent or task", () => {
     withEngine((engine) => {
       engine.addEdge({

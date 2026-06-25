@@ -25,6 +25,7 @@ import type {
   V2HealthStatus,
   V2Memory,
   V2MemoryInput,
+  V2RetrievalMode,
   V2SearchOptions,
   V2SearchResult,
 } from "./v2-types.js";
@@ -298,6 +299,9 @@ export class V2MemoryEngine {
 
   search(options: V2SearchOptions = {}): V2SearchResult[] {
     const limit = clampInteger(options.limit ?? 10, 1, 50);
+    const retrieval = options.retrieval || "hybrid";
+    const candidateLimit =
+      retrieval === "hybrid" ? clampInteger(limit * 6, limit, 200) : limit;
     const tags = cleanList(options.tags);
     const params: Array<string | number> = [];
     const filters: string[] = [];
@@ -329,7 +333,7 @@ export class V2MemoryEngine {
              ORDER BY m.pinned DESC, score ASC, m.confidence DESC, m.updated_at DESC
              LIMIT ?`,
           )
-          .all(...params, matchQuery, limit) as SearchRow[])
+          .all(...params, matchQuery, candidateLimit) as SearchRow[])
       : (this.db
           .prepare(
             `SELECT m.*, NULL AS score
@@ -338,9 +342,13 @@ export class V2MemoryEngine {
              ORDER BY m.pinned DESC, m.confidence DESC, m.updated_at DESC
              LIMIT ?`,
           )
-          .all(...params, limit) as SearchRow[]);
+          .all(...params, candidateLimit) as SearchRow[]);
 
-    return rows.map((row) => mapSearchResult(row, options.query));
+    const results = rows.map((row) => mapSearchResult(row, options.query));
+    if (retrieval === "fts") {
+      return maybeExplainFtsResults(results, options.explain).slice(0, limit);
+    }
+    return rankHybridSearchResults(results, this.db, limit, options.explain);
   }
 
   searchEvidence(
@@ -1277,7 +1285,149 @@ function mapSearchResult(row: SearchRow, query?: string): V2SearchResult {
         ? row.confidence
         : Math.max(0, 100 - Math.abs(row.score)),
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
+}
+
+function maybeExplainFtsResults(
+  results: V2SearchResult[],
+  explain?: boolean,
+): V2SearchResult[] {
+  if (!explain) {
+    return results;
+  }
+  return results.map((result) => ({
+    ...result,
+    explanation: {
+      retrieval: "fts",
+      lexicalScore: roundScore(normalizeLexicalScore(result.score)),
+      confidenceBoost: 0,
+      pinnedBoost: 0,
+      recencyBoost: 0,
+      graphBoost: 0,
+      evidenceBoost: 0,
+      totalScore: roundScore(normalizeLexicalScore(result.score)),
+      signals: ["lexical FTS ranking only"],
+    },
+  }));
+}
+
+function rankHybridSearchResults(
+  results: V2SearchResult[],
+  db: Database.Database,
+  limit: number,
+  explain?: boolean,
+): V2SearchResult[] {
+  const ranked = results.map((result) => {
+    const lexicalScore = normalizeLexicalScore(result.score);
+    const confidenceBoost = result.confidence * 10;
+    const pinnedBoost = result.pinned ? 15 : 0;
+    const recencyBoost = calculateRecencyBoost(result.updatedAt || result.createdAt);
+    const graphBoost = Math.min(10, countGraphLinks(db, "memory", String(result.id)) * 2);
+    const evidenceBoost = Math.min(12, countEvidenceLinks(db, String(result.id)) * 3);
+    const totalScore =
+      lexicalScore +
+      confidenceBoost +
+      pinnedBoost +
+      recencyBoost +
+      graphBoost +
+      evidenceBoost;
+    const signals = [
+      `lexical=${roundScore(lexicalScore)}`,
+      `confidence=${roundScore(confidenceBoost)}`,
+    ];
+    if (pinnedBoost > 0) {
+      signals.push("pinned");
+    }
+    if (recencyBoost > 0) {
+      signals.push(`recent=${roundScore(recencyBoost)}`);
+    }
+    if (graphBoost > 0) {
+      signals.push(`graph=${roundScore(graphBoost)}`);
+    }
+    if (evidenceBoost > 0) {
+      signals.push(`evidence=${roundScore(evidenceBoost)}`);
+    }
+
+    return {
+      ...result,
+      score: roundScore(totalScore),
+      explanation: explain
+        ? {
+            retrieval: "hybrid" as V2RetrievalMode,
+            lexicalScore: roundScore(lexicalScore),
+            confidenceBoost: roundScore(confidenceBoost),
+            pinnedBoost: roundScore(pinnedBoost),
+            recencyBoost: roundScore(recencyBoost),
+            graphBoost: roundScore(graphBoost),
+            evidenceBoost: roundScore(evidenceBoost),
+            totalScore: roundScore(totalScore),
+            signals,
+          }
+        : undefined,
+    };
+  });
+
+  return ranked
+    .sort((left, right) => {
+      const byScore = right.score - left.score;
+      if (byScore !== 0) {
+        return byScore;
+      }
+      return right.updatedAt.localeCompare(left.updatedAt);
+    })
+    .slice(0, limit);
+}
+
+function normalizeLexicalScore(score: number): number {
+  if (!Number.isFinite(score)) {
+    return 0;
+  }
+  return score <= 1 ? score * 25 : score;
+}
+
+function calculateRecencyBoost(timestamp: string): number {
+  const parsed = Date.parse(timestamp);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  const ageDays = Math.max(0, (Date.now() - parsed) / DAY_MS);
+  return Math.max(0, 12 - ageDays / 7);
+}
+
+function countGraphLinks(
+  db: Database.Database,
+  nodeType: string,
+  nodeId: string,
+): number {
+  try {
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM graph_edges
+         WHERE (from_type = ? AND from_id = ?) OR (to_type = ? AND to_id = ?)`,
+      )
+      .get(nodeType, nodeId, nodeType, nodeId) as { count: number };
+    return Number(row.count || 0);
+  } catch {
+    return 0;
+  }
+}
+
+function countEvidenceLinks(db: Database.Database, memoryId: string): number {
+  try {
+    const row = db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM evidence_chunks WHERE source_type = 'memory' AND source_id = ?",
+      )
+      .get(memoryId) as { count: number };
+    return Number(row.count || 0);
+  } catch {
+    return 0;
+  }
+}
+
+function roundScore(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 function mapEdge(row: EdgeRow): V2GraphEdge {

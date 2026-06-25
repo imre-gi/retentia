@@ -95,6 +95,100 @@ export async function startV2McpServer(
         },
       },
       {
+        name: "memory_get",
+        description:
+          "Return a full durable memory by id, including archived memories.",
+        inputSchema: {
+          type: "object",
+          properties: { id: { type: "number" } },
+          required: ["id"],
+        },
+      },
+      {
+        name: "memory_update",
+        description:
+          "Update mutable metadata or content for an existing durable memory.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "number" },
+            kind: { type: "string", enum: MEMORY_KINDS },
+            title: { type: "string" },
+            body: { type: "string" },
+            project: { type: "string" },
+            tags: { type: "array", items: { type: "string" } },
+            sourceEventIds: { type: "array", items: { type: "number" } },
+            confidence: { type: "number" },
+            pinned: { type: "boolean" },
+            archived: { type: "boolean" },
+          },
+          required: ["id"],
+        },
+      },
+      {
+        name: "memory_pin",
+        description: "Pin or unpin a durable memory.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "number" },
+            pinned: { type: "boolean" },
+          },
+          required: ["id", "pinned"],
+        },
+      },
+      {
+        name: "memory_archive",
+        description: "Archive or restore a durable memory without deleting it.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "number" },
+            archived: { type: "boolean" },
+          },
+          required: ["id", "archived"],
+        },
+      },
+      {
+        name: "memory_delete",
+        description:
+          "Delete a durable memory and memory-scoped evidence. Requires confirm=true.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "number" },
+            confirm: { type: "boolean" },
+          },
+          required: ["id", "confirm"],
+        },
+      },
+      {
+        name: "memory_merge",
+        description:
+          "Merge duplicate memories into a primary memory and retarget evidence/graph links.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            primaryId: { type: "number" },
+            duplicateIds: { type: "array", items: { type: "number" } },
+          },
+          required: ["primaryId", "duplicateIds"],
+        },
+      },
+      {
+        name: "memory_stale",
+        description:
+          "List non-archived memories older than a threshold for review.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            olderThanDays: { type: "number" },
+            project: { type: "string" },
+            limit: { type: "number" },
+          },
+        },
+      },
+      {
         name: "memory_search",
         description:
           "Search compact memories with FTS, metadata filters, and low-token snippets.",
@@ -108,6 +202,7 @@ export async function startV2McpServer(
             limit: { type: "number" },
             retrieval: { type: "string", enum: ["fts", "hybrid"] },
             explain: { type: "boolean" },
+            includeArchived: { type: "boolean" },
           },
         },
       },
@@ -269,6 +364,67 @@ async function handleToolCall(
           }),
         );
 
+      case "memory_get":
+        return textResult(engine.getMemoryById(getRequiredNumber(args, "id")));
+
+      case "memory_update":
+        return textResult(
+          engine.updateMemory(getRequiredNumber(args, "id"), {
+            kind: getOptionalMemoryKind(args),
+            title: getString(args, "title", false) || undefined,
+            body: getString(args, "body", false) || undefined,
+            project: getString(args, "project", false) || undefined,
+            tags:
+              args.tags === undefined ? undefined : getStringArray(args, "tags"),
+            sourceEventIds:
+              args.sourceEventIds === undefined
+                ? undefined
+                : getNumberArray(args, "sourceEventIds"),
+            confidence: getNumber(args, "confidence"),
+            pinned: getBoolean(args, "pinned"),
+            archived: getBoolean(args, "archived"),
+          }),
+        );
+
+      case "memory_pin":
+        return textResult(
+          engine.setMemoryPinned(
+            getRequiredNumber(args, "id"),
+            getRequiredBoolean(args, "pinned"),
+          ),
+        );
+
+      case "memory_archive":
+        return textResult(
+          engine.archiveMemory(
+            getRequiredNumber(args, "id"),
+            getRequiredBoolean(args, "archived"),
+          ),
+        );
+
+      case "memory_delete":
+        if (!getRequiredBoolean(args, "confirm")) {
+          return errorResult("memory_delete requires confirm=true.");
+        }
+        return textResult(engine.deleteMemory(getRequiredNumber(args, "id")));
+
+      case "memory_merge":
+        return textResult(
+          engine.mergeMemories(
+            getRequiredNumber(args, "primaryId"),
+            getNumberArray(args, "duplicateIds"),
+          ),
+        );
+
+      case "memory_stale":
+        return textResult(
+          engine.listStaleMemories({
+            olderThanDays: getNumber(args, "olderThanDays"),
+            project: getString(args, "project", false) || undefined,
+            limit: getNumber(args, "limit"),
+          }),
+        );
+
       case "memory_search":
         return textResult(
           engine.search({
@@ -279,6 +435,7 @@ async function handleToolCall(
             limit: getNumber(args, "limit"),
             retrieval: getOptionalRetrievalMode(args),
             explain: getBoolean(args, "explain"),
+            includeArchived: getBoolean(args, "includeArchived"),
           }),
         );
 
@@ -427,6 +584,14 @@ function getNumber(
   return undefined;
 }
 
+function getRequiredNumber(args: Record<string, unknown>, key: string): number {
+  const value = getNumber(args, key);
+  if (value === undefined) {
+    throw new Error(`${key} is required.`);
+  }
+  return value;
+}
+
 function getNumberArray(args: Record<string, unknown>, key: string): number[] {
   const value = args[key];
   if (!Array.isArray(value)) {
@@ -443,6 +608,17 @@ function getBoolean(
 ): boolean | undefined {
   const value = args[key];
   return typeof value === "boolean" ? value : undefined;
+}
+
+function getRequiredBoolean(
+  args: Record<string, unknown>,
+  key: string,
+): boolean {
+  const value = getBoolean(args, key);
+  if (value === undefined) {
+    throw new Error(`${key} is required.`);
+  }
+  return value;
 }
 
 function getMemoryKind(args: Record<string, unknown>): V2MemoryKind {

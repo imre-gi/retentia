@@ -53,6 +53,13 @@ const V2_TOP_LEVEL_ACTIONS = new Set([
   "mcp-config",
   "event",
   "memory",
+  "memory-get",
+  "memory-update",
+  "memory-pin",
+  "memory-archive",
+  "memory-delete",
+  "memory-merge",
+  "memory-stale",
   "evidence",
   "evidence-search",
   "search",
@@ -241,6 +248,100 @@ async function handleV2Command(
         return;
       }
 
+      case "memory-get": {
+        printJson(
+          engine.getMemoryById(
+            getRequiredNumber(parsed.options.id, "--id"),
+            true,
+          ),
+        );
+        return;
+      }
+
+      case "memory-update": {
+        const saved = engine.updateMemory(
+          getRequiredNumber(parsed.options.id, "--id"),
+          {
+            kind: getOptionalV2MemoryKind(parsed.options.kind),
+            title: getOptionalString(parsed.options.title),
+            body: getOptionalString(parsed.options.body),
+            project: getOptionalString(parsed.options.project),
+            tags:
+              parsed.options.tags === undefined
+                ? undefined
+                : getCsvList(parsed.options.tags),
+            sourceEventIds:
+              parsed.options["source-event-ids"] === undefined
+                ? undefined
+                : getCsvList(parsed.options["source-event-ids"])
+                    .map((value) => Number(value))
+                    .filter((value) => Number.isInteger(value) && value > 0),
+            confidence: getOptionalNumber(parsed.options.confidence),
+            pinned: parsed.options.pinned
+              ? true
+              : parsed.options.unpinned
+                ? false
+                : undefined,
+            archived: parsed.options.archived
+              ? true
+              : parsed.options.unarchived
+                ? false
+                : undefined,
+          },
+        );
+        printJson(saved);
+        return;
+      }
+
+      case "memory-pin": {
+        printJson(
+          engine.setMemoryPinned(
+            getRequiredNumber(parsed.options.id, "--id"),
+            !parsed.options.unpin,
+          ),
+        );
+        return;
+      }
+
+      case "memory-archive": {
+        printJson(
+          engine.archiveMemory(
+            getRequiredNumber(parsed.options.id, "--id"),
+            !parsed.options.restore,
+          ),
+        );
+        return;
+      }
+
+      case "memory-delete": {
+        if (!parsed.options.yes) {
+          throw new Error("memory-delete requires --yes.");
+        }
+        printJson(engine.deleteMemory(getRequiredNumber(parsed.options.id, "--id")));
+        return;
+      }
+
+      case "memory-merge": {
+        const merged = engine.mergeMemories(
+          getRequiredNumber(parsed.options["primary-id"], "--primary-id"),
+          getCsvList(parsed.options["duplicate-ids"]).map((value) =>
+            Number(value),
+          ),
+        );
+        printJson(merged);
+        return;
+      }
+
+      case "memory-stale": {
+        const memories = engine.listStaleMemories({
+          olderThanDays: getOptionalNumber(parsed.options["older-than-days"]),
+          project: getOptionalString(parsed.options.project),
+          limit: getOptionalNumber(parsed.options.limit),
+        });
+        printJson({ total: memories.length, memories });
+        return;
+      }
+
       case "evidence": {
         const saved = engine.addEvidence({
           sourceType: getRequiredString(
@@ -284,6 +385,7 @@ async function handleV2Command(
           limit: getOptionalNumber(parsed.options.limit),
           retrieval: getOptionalV2RetrievalMode(parsed.options.retrieval),
           explain: Boolean(parsed.options.explain),
+          includeArchived: Boolean(parsed.options["include-archived"]),
         });
         printJson({ total: results.length, results });
         return;
@@ -724,6 +826,12 @@ function printV2Help(): void {
     `  ${APP_NAME} v2 migrate [--from-data-file <old-retentia.db>] [--data-file <new-retentia-v2.db>]`,
     `  ${APP_NAME} v2 event --type <type> --source <source> [--actor <id>] [--task-id <id>] [--summary <text>]`,
     `  ${APP_NAME} v2 memory --kind <kind> --title <text> --body <text> [--tags <a,b>] [--pinned]`,
+    `  ${APP_NAME} v2 memory-get --id <id>`,
+    `  ${APP_NAME} v2 memory-update --id <id> [--title <text>] [--body <text>] [--pinned|--unpinned]`,
+    `  ${APP_NAME} v2 memory-archive --id <id> [--restore]`,
+    `  ${APP_NAME} v2 memory-delete --id <id> --yes`,
+    `  ${APP_NAME} v2 memory-merge --primary-id <id> --duplicate-ids <a,b>`,
+    `  ${APP_NAME} v2 memory-stale [--older-than-days <n>] [--project <name>]`,
     `  ${APP_NAME} v2 evidence --source-type <type> --source-id <id> --content <text> [--uri <path>]`,
     `  ${APP_NAME} v2 evidence-search [--query <text>] [--source-type <type>] [--source-id <id>]`,
     `  ${APP_NAME} v2 search [--query <text>] [--project <name>] [--kind <kind>] [--tags <a,b>] [--retrieval fts|hybrid] [--explain]`,
@@ -1160,6 +1268,17 @@ function getRequiredString(
   return normalized;
 }
 
+function getRequiredNumber(
+  value: string | boolean | undefined,
+  flag: string,
+): number {
+  const parsed = getOptionalNumber(value);
+  if (parsed === undefined) {
+    throw new Error(`${flag} is required.`);
+  }
+  return parsed;
+}
+
 function getOptionalString(
   value: string | boolean | undefined,
 ): string | undefined {
@@ -1234,6 +1353,12 @@ function printHelp(): void {
     `  ${APP_NAME} migrate [--from-data-file <old-retentia.db>] [--data-file <new-retentia-v2.db>]`,
     `  ${APP_NAME} event --type <type> --source <codex|claude-code> [--summary <text>]`,
     `  ${APP_NAME} memory --kind <kind> --title <text> --body <text> [--tags <a,b>]`,
+    `  ${APP_NAME} memory-get --id <id>`,
+    `  ${APP_NAME} memory-update --id <id> [--title <text>] [--body <text>] [--pinned|--unpinned]`,
+    `  ${APP_NAME} memory-archive --id <id> [--restore]`,
+    `  ${APP_NAME} memory-delete --id <id> --yes`,
+    `  ${APP_NAME} memory-merge --primary-id <id> --duplicate-ids <a,b>`,
+    `  ${APP_NAME} memory-stale [--older-than-days <n>] [--project <name>]`,
     `  ${APP_NAME} evidence --source-type <type> --source-id <id> --content <text> [--uri <path>]`,
     `  ${APP_NAME} evidence-search [--query <text>] [--source-type <type>] [--source-id <id>]`,
     `  ${APP_NAME} search [--query <text>] [--project <name>] [--kind <kind>] [--retrieval fts|hybrid] [--explain]`,

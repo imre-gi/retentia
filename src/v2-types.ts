@@ -64,6 +64,18 @@ export interface V2MemoryInput {
   createdAt?: string;
 }
 
+export interface V2MemoryUpdateInput {
+  kind?: V2MemoryKind;
+  title?: string;
+  body?: string;
+  project?: string;
+  tags?: string[];
+  sourceEventIds?: number[];
+  confidence?: number;
+  pinned?: boolean;
+  archived?: boolean;
+}
+
 export interface V2Memory {
   id: number;
   kind: V2MemoryKind;
@@ -74,6 +86,7 @@ export interface V2Memory {
   sourceEventIds: number[];
   confidence: number;
   pinned: boolean;
+  archived: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -145,6 +158,13 @@ export interface V2SearchOptions {
   limit?: number;
   retrieval?: V2RetrievalMode;
   explain?: boolean;
+  includeArchived?: boolean;
+}
+
+export interface V2MemoryStaleOptions {
+  olderThanDays?: number;
+  project?: string;
+  limit?: number;
 }
 
 export interface V2SearchExplanation {

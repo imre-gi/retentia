@@ -180,6 +180,68 @@ describe("V2MemoryEngine", () => {
     });
   });
 
+  test("updates, archives, merges, and lists stale memories", () => {
+    withEngine((engine) => {
+      const oldMemory = engine.addMemory({
+        kind: "fact",
+        project: "retentia",
+        title: "Old install note",
+        body: "The old install flow used a worker.",
+        tags: ["install"],
+        createdAt: "2020-01-01T00:00:00.000Z",
+      });
+      const duplicate = engine.addMemory({
+        kind: "fact",
+        project: "retentia",
+        title: "Duplicate install note",
+        body: "The worker note is duplicate context.",
+        tags: ["duplicate"],
+      });
+      engine.addEvidence({
+        sourceType: "memory",
+        sourceId: String(duplicate.id),
+        project: "retentia",
+        content: "Duplicate evidence should move to the primary memory.",
+      });
+
+      const staleBeforeUpdate = engine.listStaleMemories({
+        olderThanDays: 365,
+        project: "retentia",
+      });
+      const pinned = engine.setMemoryPinned(oldMemory.id, true);
+      const archived = engine.archiveMemory(oldMemory.id, true);
+      const searchWithoutArchived = engine.search({
+        query: "install",
+        project: "retentia",
+      });
+      const searchWithArchived = engine.search({
+        query: "install",
+        project: "retentia",
+        includeArchived: true,
+      });
+      const restored = engine.archiveMemory(oldMemory.id, false);
+      const merged = engine.mergeMemories(oldMemory.id, [duplicate.id]);
+      const evidence = engine.listEvidenceForSource(
+        "memory",
+        String(oldMemory.id),
+      );
+
+      expect(staleBeforeUpdate.some((item) => item.id === oldMemory.id)).toBe(true);
+      expect(pinned.pinned).toBe(true);
+      expect(archived.archived).toBe(true);
+      expect(searchWithoutArchived.some((item) => item.id === oldMemory.id)).toBe(false);
+      expect(searchWithArchived.some((item) => item.id === oldMemory.id)).toBe(true);
+      expect(restored.archived).toBe(false);
+      expect(merged.body).toContain("Merged memory");
+      expect(evidence).toHaveLength(1);
+      expect(() => engine.getMemoryById(duplicate.id)).toThrow();
+      expect(engine.deleteMemory(oldMemory.id)).toEqual({
+        deleted: true,
+        id: oldMemory.id,
+      });
+    });
+  });
+
   test("lists graph edges around an agent or task", () => {
     withEngine((engine) => {
       engine.addEdge({

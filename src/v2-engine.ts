@@ -25,6 +25,8 @@ import type {
   V2HealthStatus,
   V2Memory,
   V2MemoryInput,
+  V2MemoryStaleOptions,
+  V2MemoryUpdateInput,
   V2RetrievalMode,
   V2SearchOptions,
   V2SearchResult,
@@ -58,6 +60,7 @@ interface MemoryRow {
   source_event_ids_json: string;
   confidence: number;
   pinned: number;
+  archived: number;
 }
 
 interface SearchRow extends MemoryRow {
@@ -224,6 +227,172 @@ export class V2MemoryEngine {
     return this.getMemory(Number(info.lastInsertRowid));
   }
 
+  getMemoryById(id: number, includeArchived = true): V2Memory {
+    const memory = this.getMemory(id);
+    if (!includeArchived && memory.archived) {
+      throw new Error(`Memory ${id} is archived.`);
+    }
+    return memory;
+  }
+
+  updateMemory(id: number, input: V2MemoryUpdateInput): V2Memory {
+    const current = this.getMemory(id);
+    const next = {
+      kind: input.kind ?? current.kind,
+      project: cleanOptional(input.project) || current.project,
+      title: cleanOptional(input.title) || current.title,
+      body: cleanOptional(input.body) || current.body,
+      tags: input.tags === undefined ? current.tags : cleanList(input.tags),
+      sourceEventIds:
+        input.sourceEventIds === undefined
+          ? current.sourceEventIds
+          : cleanNumberList(input.sourceEventIds),
+      confidence: clamp(input.confidence ?? current.confidence, 0, 1),
+      pinned: input.pinned ?? current.pinned,
+      archived: input.archived ?? current.archived,
+    };
+
+    this.db
+      .prepare(
+        `UPDATE memories
+         SET updated_at = ?, kind = ?, project = ?, title = ?, body = ?,
+             tags_json = ?, source_event_ids_json = ?, confidence = ?,
+             pinned = ?, archived = ?
+         WHERE id = ?`,
+      )
+      .run(
+        new Date().toISOString(),
+        next.kind,
+        next.project,
+        next.title,
+        next.body,
+        toJson(next.tags),
+        toJson(next.sourceEventIds),
+        next.confidence,
+        next.pinned ? 1 : 0,
+        next.archived ? 1 : 0,
+        id,
+      );
+
+    return this.getMemory(id);
+  }
+
+  setMemoryPinned(id: number, pinned: boolean): V2Memory {
+    return this.updateMemory(id, { pinned });
+  }
+
+  archiveMemory(id: number, archived = true): V2Memory {
+    return this.updateMemory(id, { archived });
+  }
+
+  deleteMemory(id: number): { deleted: true; id: number } {
+    this.getMemory(id);
+    this.db
+      .prepare(
+        "DELETE FROM graph_edges WHERE (from_type = 'memory' AND from_id = ?) OR (to_type = 'memory' AND to_id = ?)",
+      )
+      .run(String(id), String(id));
+    this.db
+      .prepare(
+        "DELETE FROM evidence_chunks WHERE source_type = 'memory' AND source_id = ?",
+      )
+      .run(String(id));
+    this.db.prepare("DELETE FROM memories WHERE id = ?").run(id);
+    return { deleted: true, id };
+  }
+
+  mergeMemories(primaryId: number, duplicateIds: number[]): V2Memory {
+    const primary = this.getMemory(primaryId);
+    const uniqueDuplicateIds = [
+      ...new Set(duplicateIds.filter((id) => id > 0 && id !== primaryId)),
+    ];
+    if (uniqueDuplicateIds.length === 0) {
+      return primary;
+    }
+
+    const duplicates = uniqueDuplicateIds.map((id) => this.getMemory(id));
+    const mergedBody = [
+      primary.body,
+      ...duplicates.map(
+        (memory) =>
+          `Merged memory #${memory.id}: ${memory.title}\n${memory.body}`,
+      ),
+    ].join("\n\n");
+    const mergedTags = [
+      ...new Set([
+        ...primary.tags,
+        ...duplicates.flatMap((memory) => memory.tags),
+      ]),
+    ];
+    const mergedSourceEventIds = [
+      ...new Set([
+        ...primary.sourceEventIds,
+        ...duplicates.flatMap((memory) => memory.sourceEventIds),
+      ]),
+    ];
+    const merged = this.updateMemory(primaryId, {
+      body: mergedBody,
+      tags: mergedTags,
+      sourceEventIds: mergedSourceEventIds,
+      confidence: Math.max(
+        primary.confidence,
+        ...duplicates.map((memory) => memory.confidence),
+      ),
+      pinned: primary.pinned || duplicates.some((memory) => memory.pinned),
+      archived: false,
+    });
+
+    for (const duplicateId of uniqueDuplicateIds) {
+      this.db
+        .prepare(
+          "UPDATE graph_edges SET from_id = ? WHERE from_type = 'memory' AND from_id = ?",
+        )
+        .run(String(primaryId), String(duplicateId));
+      this.db
+        .prepare(
+          "UPDATE graph_edges SET to_id = ? WHERE to_type = 'memory' AND to_id = ?",
+        )
+        .run(String(primaryId), String(duplicateId));
+      this.db
+        .prepare(
+          "UPDATE evidence_chunks SET source_id = ? WHERE source_type = 'memory' AND source_id = ?",
+        )
+        .run(String(primaryId), String(duplicateId));
+      this.db.prepare("DELETE FROM memories WHERE id = ?").run(duplicateId);
+    }
+
+    this.addEdge({
+      fromType: "memory",
+      fromId: String(primaryId),
+      toType: "memory",
+      toId: String(primaryId),
+      relation: "merged_duplicates",
+      metadata: { duplicateIds: uniqueDuplicateIds },
+    });
+    return merged;
+  }
+
+  listStaleMemories(options: V2MemoryStaleOptions = {}): V2Memory[] {
+    const olderThanDays = clampInteger(options.olderThanDays ?? 90, 1, 3650);
+    const limit = clampInteger(options.limit ?? 20, 1, 250);
+    const cutoff = new Date(Date.now() - olderThanDays * DAY_MS).toISOString();
+    const params: Array<string | number> = [cutoff];
+    const filters = ["archived = 0", "updated_at < ?"];
+    if (options.project?.trim()) {
+      filters.push("project = ?");
+      params.push(options.project.trim());
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM memories
+         WHERE ${filters.join(" AND ")}
+         ORDER BY updated_at ASC, confidence ASC, id ASC
+         LIMIT ?`,
+      )
+      .all(...params, limit) as MemoryRow[];
+    return rows.map(mapMemory);
+  }
+
   addEvidence(input: V2EvidenceInput): V2EvidenceChunk {
     const createdAt = input.createdAt || new Date().toISOString();
     const redaction = input.redact === false
@@ -314,6 +483,10 @@ export class V2MemoryEngine {
     if (options.kind) {
       filters.push("m.kind = ?");
       params.push(options.kind);
+    }
+
+    if (!options.includeArchived) {
+      filters.push("m.archived = 0");
     }
 
     for (const tag of tags) {
@@ -470,10 +643,11 @@ export class V2MemoryEngine {
     return rows.map(mapEvent);
   }
 
-  listMemories(limit = 100): V2Memory[] {
+  listMemories(limit = 100, includeArchived = false): V2Memory[] {
+    const where = includeArchived ? "" : "WHERE archived = 0";
     const rows = this.db
       .prepare(
-        "SELECT * FROM memories ORDER BY pinned DESC, updated_at DESC, id DESC LIMIT ?",
+        `SELECT * FROM memories ${where} ORDER BY pinned DESC, updated_at DESC, id DESC LIMIT ?`,
       )
       .all(clampInteger(limit, 1, 1000)) as MemoryRow[];
     return rows.map(mapMemory);
@@ -717,7 +891,8 @@ export class V2MemoryEngine {
         tags_json TEXT NOT NULL,
         source_event_ids_json TEXT NOT NULL,
         confidence REAL NOT NULL,
-        pinned INTEGER NOT NULL DEFAULT 0
+        pinned INTEGER NOT NULL DEFAULT 0,
+        archived INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE INDEX IF NOT EXISTS idx_memories_project_kind ON memories(project, kind);
@@ -801,6 +976,11 @@ export class V2MemoryEngine {
       CREATE INDEX IF NOT EXISTS idx_graph_to ON graph_edges(to_type, to_id);
       CREATE INDEX IF NOT EXISTS idx_graph_relation ON graph_edges(relation);
     `);
+    this.ensureColumn(
+      "memories",
+      "archived",
+      "archived INTEGER NOT NULL DEFAULT 0",
+    );
   }
 
   private getEvent(id: number): V2Event {
@@ -831,6 +1011,16 @@ export class V2MemoryEngine {
       )
       .get(name);
     return Boolean(row);
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>;
+    if (rows.some((row) => row.name === column)) {
+      return;
+    }
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
   }
 }
 
@@ -1232,6 +1422,7 @@ function mapMemory(row: MemoryRow): V2Memory {
     sourceEventIds: parseNumberArray(row.source_event_ids_json),
     confidence: row.confidence,
     pinned: row.pinned === 1,
+    archived: row.archived === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

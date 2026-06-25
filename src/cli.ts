@@ -54,6 +54,8 @@ const V2_TOP_LEVEL_ACTIONS = new Set([
   "edge",
   "graph",
   "dashboard",
+  "doctor",
+  "health",
   "ingest",
   "migrate",
 ]);
@@ -296,6 +298,12 @@ async function handleV2Command(
         printJson(
           engine.buildDashboard(getOptionalNumber(parsed.options.limit)),
         );
+        return;
+      }
+
+      case "doctor":
+      case "health": {
+        printJson(engine.buildHealthReport());
         return;
       }
 
@@ -666,6 +674,7 @@ function printV2Help(): void {
     `  ${APP_NAME} v2 edge --from-type <type> --from-id <id> --to-type <type> --to-id <id> --relation <name>`,
     `  ${APP_NAME} v2 graph --node-type <type> --node-id <id>`,
     `  ${APP_NAME} v2 dashboard [--limit <n>]`,
+    `  ${APP_NAME} v2 doctor [--data-file <path>]`,
     `  ${APP_NAME} v2 ingest [--providers copilot,codex,claude-code] [--max-import <n>]`,
     `  ${APP_NAME} mcp [--data-file <path>]`,
     "",
@@ -1173,6 +1182,7 @@ function printHelp(): void {
     `  ${APP_NAME} edge --from-type <type> --from-id <id> --to-type <type> --to-id <id> --relation <name>`,
     `  ${APP_NAME} graph --node-type <type> --node-id <id>`,
     `  ${APP_NAME} dashboard [--limit <n>]`,
+    `  ${APP_NAME} doctor [--data-file <path>]`,
     "",
     "Global options:",
     "  --data-file <path>   Override v2 SQLite DB path (default: ~/.retentia/retentia-v2.db)",

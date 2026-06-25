@@ -22,6 +22,8 @@ export type V2MemoryKind =
 
 export type V2ContextMode = "ids" | "brief" | "task-primer" | "full-evidence";
 
+export type V2HealthStatus = "pass" | "warn" | "fail";
+
 export interface V2EventInput {
   type: V2EventType | string;
   source: string;
@@ -125,6 +127,28 @@ export interface V2ContextPack {
   truncated: boolean;
   memoryIds: number[];
   text: string;
+}
+
+export interface V2HealthCheck {
+  name: string;
+  status: V2HealthStatus;
+  summary: string;
+  details?: unknown;
+  recommendation?: string;
+}
+
+export interface V2HealthReport {
+  ok: boolean;
+  status: V2HealthStatus;
+  generatedAt: string;
+  dataFile: string;
+  checks: V2HealthCheck[];
+  totals: {
+    events: number;
+    memories: number;
+    graphEdges: number;
+    imports: number;
+  };
 }
 
 export interface V2DashboardAgent {

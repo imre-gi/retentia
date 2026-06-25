@@ -165,6 +165,15 @@ export async function startV2McpServer(
           },
         },
       },
+      {
+        name: "health_check",
+        description:
+          "Run a non-destructive Retentia v2 health check over the SQLite store, schema, FTS index, and writeability.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
     ],
   }));
 
@@ -269,6 +278,9 @@ async function handleToolCall(
 
       case "dashboard_snapshot":
         return textResult(engine.buildDashboard(getNumber(args, "limit")));
+
+      case "health_check":
+        return textResult(engine.buildHealthReport());
 
       default:
         return errorResult(`Unknown tool: ${toolName}`);

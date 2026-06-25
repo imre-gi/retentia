@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { dirname } from "node:path";
-import { mkdirSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
 import type {
   V2ContextMode,
   V2ContextOptions,
@@ -15,6 +15,9 @@ import type {
   V2ImportedEventResult,
   V2GraphEdge,
   V2GraphEdgeInput,
+  V2HealthCheck,
+  V2HealthReport,
+  V2HealthStatus,
   V2Memory,
   V2MemoryInput,
   V2SearchOptions,
@@ -378,6 +381,148 @@ export class V2MemoryEngine {
     };
   }
 
+  buildHealthReport(): V2HealthReport {
+    const checks: V2HealthCheck[] = [];
+    const pushCheck = (
+      name: string,
+      status: V2HealthStatus,
+      summary: string,
+      details?: unknown,
+      recommendation?: string,
+    ) => {
+      checks.push({ name, status, summary, details, recommendation });
+    };
+
+    const dataDir = dirname(this.dbFile);
+    try {
+      accessSync(dataDir, constants.R_OK | constants.W_OK);
+      pushCheck("data_directory", "pass", "Data directory is readable and writable.", {
+        path: dataDir,
+      });
+    } catch (error) {
+      pushCheck(
+        "data_directory",
+        "fail",
+        "Data directory is not readable and writable.",
+        { path: dataDir, error: error instanceof Error ? error.message : String(error) },
+        "Fix filesystem permissions or pass --data-file to a writable location.",
+      );
+    }
+
+    pushCheck(
+      "data_file",
+      existsSync(this.dbFile) ? "pass" : "warn",
+      existsSync(this.dbFile)
+        ? "SQLite data file exists."
+        : "SQLite data file has not been created on disk yet.",
+      { path: this.dbFile },
+      existsSync(this.dbFile) ? undefined : "Run retentia init or any v2 command that opens the store.",
+    );
+
+    const requiredTables = [
+      "events",
+      "event_imports",
+      "memories",
+      "memory_fts",
+      "graph_edges",
+    ];
+    const missingTables = requiredTables.filter((table) => !this.tableExists(table));
+    pushCheck(
+      "schema",
+      missingTables.length === 0 ? "pass" : "fail",
+      missingTables.length === 0
+        ? "Required v2 tables are present."
+        : "Required v2 tables are missing.",
+      { requiredTables, missingTables },
+      missingTables.length === 0 ? undefined : "Run retentia init against this data file.",
+    );
+
+    try {
+      const row = this.db.prepare("PRAGMA quick_check").get() as {
+        quick_check?: string;
+      };
+      const result = String(row?.quick_check || "");
+      pushCheck(
+        "sqlite_integrity",
+        result === "ok" ? "pass" : "fail",
+        result === "ok" ? "SQLite quick_check passed." : "SQLite quick_check reported a problem.",
+        { result },
+        result === "ok" ? undefined : "Back up the database and inspect it with sqlite3 PRAGMA integrity_check.",
+      );
+    } catch (error) {
+      pushCheck(
+        "sqlite_integrity",
+        "fail",
+        "SQLite quick_check could not run.",
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+    }
+
+    try {
+      const memoryCount = countRows(this.db, "memories");
+      const ftsSchema = this.db
+        .prepare("SELECT sql FROM sqlite_master WHERE name = 'memory_fts' LIMIT 1")
+        .get() as { sql?: string } | undefined;
+      const smokeResults = this.search({
+        query: "retentia-doctor-smoke-no-match",
+        limit: 1,
+      });
+      pushCheck(
+        "memory_fts",
+        "pass",
+        "Memory FTS schema exists and a MATCH smoke query completed.",
+        {
+          memoryCount,
+          smokeResultCount: smokeResults.length,
+          schema: ftsSchema?.sql,
+        },
+      );
+    } catch (error) {
+      pushCheck(
+        "memory_fts",
+        "fail",
+        "Memory FTS index could not be inspected.",
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+    }
+
+    try {
+      this.db.exec(`
+        CREATE TEMP TABLE IF NOT EXISTS retentia_doctor_write_check (id INTEGER PRIMARY KEY);
+        DELETE FROM retentia_doctor_write_check;
+        INSERT INTO retentia_doctor_write_check (id) VALUES (1);
+        DROP TABLE retentia_doctor_write_check;
+      `);
+      pushCheck("write_check", "pass", "Temporary SQLite write check passed.");
+    } catch (error) {
+      pushCheck(
+        "write_check",
+        "fail",
+        "Temporary SQLite write check failed.",
+        { error: error instanceof Error ? error.message : String(error) },
+        "Check database permissions and whether another process holds an incompatible lock.",
+      );
+    }
+
+    const totals = {
+      events: safeCountRows(this.db, "events"),
+      memories: safeCountRows(this.db, "memories"),
+      graphEdges: safeCountRows(this.db, "graph_edges"),
+      imports: safeCountRows(this.db, "event_imports"),
+    };
+    pushCheck("counts", "pass", "Core table counts collected.", totals);
+
+    const status = summarizeHealthStatus(checks);
+    return {
+      ok: status !== "fail",
+      status,
+      generatedAt: new Date().toISOString(),
+      dataFile: this.dbFile,
+      checks,
+      totals,
+    };
+  }
+
   private initialize(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS events (
@@ -482,6 +627,15 @@ export class V2MemoryEngine {
       .prepare("SELECT * FROM memories WHERE id = ?")
       .get(id) as MemoryRow;
     return mapMemory(row);
+  }
+
+  private tableExists(name: string): boolean {
+    const row = this.db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE name = ? AND type IN ('table', 'virtual table') LIMIT 1",
+      )
+      .get(name);
+    return Boolean(row);
   }
 }
 
@@ -852,6 +1006,24 @@ function countRows(db: Database.Database, table: string): number {
     count: number;
   };
   return Number(row.count || 0);
+}
+
+function safeCountRows(db: Database.Database, table: string): number {
+  try {
+    return countRows(db, table);
+  } catch {
+    return 0;
+  }
+}
+
+function summarizeHealthStatus(checks: V2HealthCheck[]): V2HealthStatus {
+  if (checks.some((check) => check.status === "fail")) {
+    return "fail";
+  }
+  if (checks.some((check) => check.status === "warn")) {
+    return "warn";
+  }
+  return "pass";
 }
 
 function mapMemory(row: MemoryRow): V2Memory {

@@ -1390,10 +1390,17 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .panel-head { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
       .panel-head h2 { margin: 0; font-size: 14px; }
       .graph { flex: 1; min-height: 0; overflow: auto; padding: 10px; background: oklch(0.19 0.018 248); }
-      .graph svg { display: block; width: 100%; min-width: 940px; height: auto; min-height: 620px; overflow: visible; }
+      .graph svg { display: block; width: 100%; min-width: 680px; height: auto; min-height: 500px; overflow: visible; }
+      .map-edge { stroke-linecap: round; }
+      .map-edge-active { stroke-dasharray: 8 10; animation: map-edge-flow 900ms linear infinite; }
+      .map-edge-delegation { stroke-dasharray: 5 5; }
+      .map-edge-spawn { stroke-dasharray: 5 6; }
+      .map-edge-persisted { opacity: .45; }
       .map-node { cursor: pointer; }
-      .map-node:hover rect { stroke-width: 2.5; }
-      .map-node.selected rect { stroke: var(--amber); stroke-width: 2.5; }
+      .map-node-card { transition: fill 120ms ease-out, stroke 120ms ease-out, stroke-width 120ms ease-out; }
+      .map-node:hover .map-node-card { fill: oklch(0.25 0.024 248); stroke-width: 2; }
+      .map-node.selected .map-node-card { stroke: var(--amber); stroke-width: 2; }
+      @keyframes map-edge-flow { from { stroke-dashoffset: 18; } to { stroke-dashoffset: 0; } }
       .inspector-body { min-height: 0; overflow: auto; padding: 12px; display: grid; gap: 12px; }
       .focus-title { font-size: 16px; font-weight: 760; margin-bottom: 4px; }
       .kv { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 6px 10px; font-size: 12px; }
@@ -1442,14 +1449,15 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .hidden { display: none; }
       .error { border: 1px solid var(--red); color: var(--red); padding: 10px; border-radius: 8px; margin-bottom: 12px; }
       @media (max-width: 1120px) { .metrics { grid-template-columns: repeat(4, minmax(110px, 1fr)); } .insight-grid, .wide-grid { grid-template-columns: 1fr; } }
-      @media (max-width: 980px) { .metrics, .trend-grid, .workbench { grid-template-columns: 1fr; } .top { align-items: flex-start; flex-direction: column; } .actions { justify-content: flex-start; } .map-panel { min-height: 520px; } .graph svg { min-width: 820px; min-height: 520px; } .health-list { grid-template-columns: 1fr; } }
+      @media (max-width: 980px) { .metrics, .trend-grid, .workbench { grid-template-columns: 1fr; } .top { align-items: flex-start; flex-direction: column; } .actions { justify-content: flex-start; } .map-panel { min-height: 500px; } .graph svg { min-width: 680px; min-height: 480px; } .health-list { grid-template-columns: 1fr; } }
+      @media (prefers-reduced-motion: reduce) { .map-edge-active { animation: none; } }
     </style>
   </head>
   <body>
     <main class="shell">
       <div class="top">
         <div><h1>Retentia Control Plane</h1><div id="dashboardSubtitle" class="sub">${loading ? "Waiting for Retentia v2 stream" : "Retentia v2 stream"}</div></div>
-        <div class="actions"><button class="tab active" data-view="control">Control</button><button class="tab" data-view="memory">Memory</button><button class="tab" data-view="quality">Retrieval</button><button class="tab" data-view="operations">Operations</button><span id="streamState" class="live"><span class="dot"></span>Connecting</span><button data-command="refresh">Refresh</button><button data-command="doctor">Doctor</button><button data-command="setup">Install MCP</button></div>
+        <div class="actions"><button class="tab active" data-view="control">Control</button><button class="tab" data-view="memory">Memory</button><button class="tab" data-view="quality">Retrieval</button><button class="tab" data-view="operations">Operations</button><span id="streamState" class="live"><span class="dot"></span>Connecting</span></div>
       </div>
       <div id="dashboardError"></div>
       <section id="metricStrip" class="metrics"></section>
@@ -1566,10 +1574,8 @@ function buildAgentDashboardPayload(
   const contextPreview = toRecord(data.contextPreview);
   const quality = toRecord(data.quality);
   const health = toRecord(data.health);
+  const activeTasks = tasks.filter(isActiveTask);
   const graphNodes = buildGraphNodes(agents, tasks, memories);
-  const activeTasks = tasks.filter(
-    (task) => (toText(task.status) || "active") === "active",
-  );
   const focusTask = pickFocusTask(tasks);
   const generatedAt = toText(data.generatedAt) || new Date().toISOString();
 
@@ -1596,7 +1602,7 @@ function buildAgentDashboardPayload(
       metric("Relations", edges.length),
       metric("Evidence", toNumber(totals.evidenceChunks) ?? 0),
     ].join(""),
-    graphHtml: renderAgentGraphSvg(graphNodes, edges, tasks),
+    graphHtml: renderAgentGraphSvg(graphNodes, edges),
     inspectorHtml: renderInspector(tasks, agents, activities, contextPreview),
     memoryHtml: renderMemoryPlane(memories, contextPreview),
     qualityHtml: renderQualityPlane(
@@ -1759,12 +1765,16 @@ function renderQualityPlane(
   const sampleLowConfidence = memories.filter(
     (memory) => (toNumber(memory.confidence) ?? 0) < 0.6,
   ).length;
-  const memoryTotal = toNumber(quality.memoryTotal) ?? toNumber(totals.memories) ?? memories.length;
+  const memoryTotal =
+    toNumber(quality.memoryTotal) ??
+    toNumber(totals.memories) ??
+    memories.length;
   const activeMemoryTotal = toNumber(quality.activeMemoryTotal) ?? memoryTotal;
   const sampleSize = toNumber(quality.sampleSize) ?? memories.length;
   const averageConfidence =
     toNumber(quality.averageConfidence) ?? getAverageConfidence(memories);
-  const highConfidence = toNumber(quality.highConfidence) ?? sampleHighConfidence;
+  const highConfidence =
+    toNumber(quality.highConfidence) ?? sampleHighConfidence;
   const lowConfidence = toNumber(quality.lowConfidence) ?? sampleLowConfidence;
   const pinnedTotal =
     toNumber(quality.pinnedTotal) ??
@@ -1789,8 +1799,12 @@ function renderQualityPlane(
       : `${evidenceTotal} chunks across ${activeMemoryTotal} active memories`;
   const activeDetail =
     activeMemoryTotal === memoryTotal
-      ? `${sampleSize} shown in current dashboard sample`
+      ? `${activeMemoryTotal} active memories in store`
       : `${activeMemoryTotal} active, ${memoryTotal} total`;
+  const snapshotScope =
+    sampleSize < activeMemoryTotal
+      ? `Full-store metrics, ${sampleSize} loaded`
+      : `Full-store metrics, ${activeMemoryTotal} loaded`;
   const kindCounts = distributionFromCounts(quality.kindCounts);
 
   return `
@@ -1804,7 +1818,7 @@ function renderQualityPlane(
     </div>
     <div class="wide-grid">
       <section class="stat-panel">
-        <div class="panel-head"><h2>Retrieval Snapshot</h2><span class="muted">${sampleSize} shown, ${contextMemoryCount} in preview</span></div>
+        <div class="panel-head"><h2>Retrieval Snapshot</h2><span class="muted">${snapshotScope}, ${contextMemoryCount} in preview</span></div>
         <div class="stat-body">
           ${renderMeter("Avg memory confidence", averageConfidence, `${highConfidence} high confidence, ${lowConfidence} need review`, toneForRatio(averageConfidence, 0.75, 0.55))}
           ${renderMeter("Preview size", contextRatio, `${contextMemoryCount} memories, ${usedChars} of ${maxChars || "n/a"} characters`, toneForCeiling(contextRatio, 0.72, 0.9))}
@@ -1824,14 +1838,13 @@ function renderOperationsPlane(
   activities: JsonResult[],
   totals: JsonResult,
 ): string {
-  const activeTasks = tasks.filter(
-    (task) => (toText(task.status) || "active") === "active",
-  ).length;
+  const activeTasks = tasks.filter(isActiveTask).length;
   const completedTasks = tasks.filter(
     (task) => toText(task.status) === "completed",
   ).length;
-  const failedTasks = tasks.filter((task) => toText(task.status) === "failed")
-    .length;
+  const failedTasks = tasks.filter(
+    (task) => toText(task.status) === "failed",
+  ).length;
   const closedTasks = completedTasks + failedTasks;
   const successRatio = closedTasks > 0 ? completedTasks / closedTasks : 0;
   const eventTotal = toNumber(totals.events) ?? activities.length;
@@ -2014,7 +2027,9 @@ function projectSignalDistribution(
 function sortDistribution(
   items: DashboardDistributionItem[],
 ): DashboardDistributionItem[] {
-  return items.sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+  return items.sort(
+    (a, b) => b.value - a.value || a.label.localeCompare(b.label),
+  );
 }
 
 function getAverageConfidence(memories: JsonResult[]): number {
@@ -2028,7 +2043,11 @@ function getAverageConfidence(memories: JsonResult[]): number {
   return total / memories.length;
 }
 
-function toneForRatio(value: number, goodAt: number, warnBelow: number): string {
+function toneForRatio(
+  value: number,
+  goodAt: number,
+  warnBelow: number,
+): string {
   if (value >= goodAt) {
     return "good";
   }
@@ -2105,6 +2124,38 @@ function buildNodeDetails(
       );
     }
   }
+  const knownAgentIds = new Set(
+    agents.map((agent) => toText(agent.id)).filter(Boolean),
+  );
+  for (const task of tasks) {
+    const actor = getTaskActor(task);
+    if (knownAgentIds.has(actor)) {
+      continue;
+    }
+    knownAgentIds.add(actor);
+    const ownedTasks = tasks.filter((item) => getTaskActor(item) === actor);
+    const syntheticAgent: JsonResult = {
+      id: actor,
+      source: toText(task.source) || "task",
+      role: toText(task.role) || "agent",
+      status: ownedTasks.some(isActiveTask) ? "active" : "idle",
+      activeTasks: ownedTasks.filter(isActiveTask).length,
+      completedTasks: ownedTasks.filter(
+        (item) => toText(item.status) === "completed",
+      ).length,
+      failedTasks: ownedTasks.filter((item) => toText(item.status) === "failed")
+        .length,
+      lastSeenAt: ownedTasks
+        .map((item) => toText(item.lastSeenAt) || "")
+        .sort()
+        .at(-1),
+    };
+    details[`agent:${actor}`] = renderAgentInspector(
+      syntheticAgent,
+      tasks,
+      activities,
+    );
+  }
   return details;
 }
 
@@ -2158,9 +2209,7 @@ function renderAgentInspector(
   const ownedTasks = tasks.filter(
     (task) => (toText(task.actor) || toText(task.source)) === agentId,
   );
-  const activeTask =
-    ownedTasks.find((task) => (toText(task.status) || "active") === "active") ||
-    ownedTasks[0];
+  const activeTask = ownedTasks.find(isActiveTask) || ownedTasks[0];
   const agentActivities = activities
     .filter(
       (activity) =>
@@ -2208,10 +2257,11 @@ function renderMemoryPlane(
 }
 
 function pickFocusTask(tasks: JsonResult[]): JsonResult | undefined {
-  return (
-    tasks.find((task) => (toText(task.status) || "active") === "active") ||
-    tasks[0]
-  );
+  return tasks.find(isActiveTask) || tasks[0];
+}
+
+function isActiveTask(task: JsonResult): boolean {
+  return (toText(task.status) || "active") === "active";
 }
 
 function renderActivityItems(activities: JsonResult[]): string {
@@ -2239,108 +2289,330 @@ function arrayOfRecords(value: unknown): JsonResult[] {
   return Array.isArray(value) ? value.map((item) => toRecord(item)) : [];
 }
 
+interface AgentGraphRow {
+  label: string;
+  value: string;
+}
+
+interface AgentGraphNode {
+  id: string;
+  type: "agent" | "subagent" | "task";
+  label: string;
+  detail: string;
+  rows: AgentGraphRow[];
+  status: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  actorId?: string;
+  parentAgentId?: string;
+  taskId?: string;
+}
+
 function buildGraphNodes(
   agents: JsonResult[],
   tasks: JsonResult[],
   _memories: JsonResult[],
-): Array<{
-  id: string;
-  type: string;
-  label: string;
-  detail: string;
-  status: string;
-  x: number;
-  y: number;
-}> {
-  const nodes: Array<{
-    id: string;
-    type: string;
-    label: string;
-    detail: string;
-    status: string;
-    x: number;
-    y: number;
-  }> = [];
-  const activeTaskByActor = new Map<string, JsonResult>();
+): AgentGraphNode[] {
+  const activeTasks = tasks.filter(isActiveTask).slice(0, 16);
+  if (activeTasks.length === 0) {
+    return [];
+  }
+
+  const nodes: AgentGraphNode[] = [];
+  const agentsById = new Map<string, JsonResult>();
+  const agentOrder = new Map<string, number>();
+  agents.forEach((agent, index) => {
+    const agentId = toText(agent.id) || String(index);
+    agentsById.set(agentId, agent);
+    agentOrder.set(agentId, index);
+  });
+
+  const tasksById = new Map<string, JsonResult>();
   for (const task of tasks) {
-    const actor = toText(task.actor) || toText(task.source);
-    if (actor && !activeTaskByActor.has(actor)) {
-      activeTaskByActor.set(actor, task);
+    const taskId = toText(task.id);
+    if (taskId) {
+      tasksById.set(taskId, task);
     }
   }
 
-  agents.slice(0, 8).forEach((agent, index) => {
-    const agentId = toText(agent.id) || String(index);
-    const activeTask = activeTaskByActor.get(agentId);
-    nodes.push({
-      id: `agent:${agentId}`,
-      type: "agent",
-      label: agentId,
-      detail: activeTask
-        ? `on: ${toText(activeTask.title) || toText(activeTask.id) || "task"}`
-        : `${toText(agent.role) || "agent"} / ${toText(agent.status) || "idle"}`,
-      status: toText(agent.status) || "idle",
-      x: 80,
-      y: 75 + index * 66,
-    });
+  const activeTasksByActor = new Map<string, JsonResult[]>();
+  const actorIds = new Set<string>();
+  const parentAgentByActor = new Map<string, string>();
+  const latestByActor = new Map<string, string>();
+
+  const rememberActor = (actor: string, task?: JsonResult) => {
+    actorIds.add(actor);
+    const lastSeenAt = task ? toText(task.lastSeenAt) || "" : "";
+    if (lastSeenAt && lastSeenAt > (latestByActor.get(actor) || "")) {
+      latestByActor.set(actor, lastSeenAt);
+    }
+  };
+
+  for (const task of activeTasks) {
+    const actor = getTaskActor(task);
+    rememberActor(actor, task);
+    const actorTasks = activeTasksByActor.get(actor) || [];
+    actorTasks.push(task);
+    activeTasksByActor.set(actor, actorTasks);
+
+    const parentTaskId = toText(task.parentTaskId);
+    const parentTask = parentTaskId ? tasksById.get(parentTaskId) : undefined;
+    const parentActor = parentTask ? getTaskActor(parentTask) : undefined;
+    if (parentActor && parentActor !== actor) {
+      rememberActor(parentActor, parentTask);
+      parentAgentByActor.set(actor, parentActor);
+    }
+  }
+
+  for (const agent of agents) {
+    const agentId = toText(agent.id);
+    if (!agentId) {
+      continue;
+    }
+    if ((toNumber(agent.activeTasks) ?? 0) > 0 || actorIds.has(agentId)) {
+      rememberActor(agentId);
+    }
+  }
+
+  const fallbackRootActor = [...actorIds].find((actor) => {
+    const role = toText(agentsById.get(actor)?.role) || "";
+    return !isSubagentRole(role);
   });
-  tasks.slice(0, 12).forEach((task, index) => {
+
+  for (const task of activeTasks) {
+    const actor = getTaskActor(task);
+    const role =
+      toText(task.role) || toText(agentsById.get(actor)?.role) || "";
+    if (
+      isSubagentRole(role) &&
+      !parentAgentByActor.has(actor) &&
+      fallbackRootActor &&
+      fallbackRootActor !== actor
+    ) {
+      parentAgentByActor.set(actor, fallbackRootActor);
+    }
+  }
+
+  const childrenByActor = new Map<string, string[]>();
+  for (const [child, parent] of parentAgentByActor) {
+    if (!actorIds.has(child)) {
+      continue;
+    }
+    actorIds.add(parent);
+    const children = childrenByActor.get(parent) || [];
+    if (!children.includes(child)) {
+      children.push(child);
+      childrenByActor.set(parent, children);
+    }
+  }
+
+  const compareActors = (left: string, right: string): number => {
+    const leftOrder = agentOrder.get(left) ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = agentOrder.get(right) ?? Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    const leftSeen =
+      latestByActor.get(left) || toText(agentsById.get(left)?.lastSeenAt) || "";
+    const rightSeen =
+      latestByActor.get(right) ||
+      toText(agentsById.get(right)?.lastSeenAt) ||
+      "";
+    const bySeen = rightSeen.localeCompare(leftSeen);
+    return bySeen !== 0 ? bySeen : left.localeCompare(right);
+  };
+
+  const depthByActor = new Map<string, number>();
+  const getActorDepth = (actor: string, seen = new Set<string>()): number => {
+    const cached = depthByActor.get(actor);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const parent = parentAgentByActor.get(actor);
+    if (!parent || parent === actor || seen.has(parent)) {
+      depthByActor.set(actor, 0);
+      return 0;
+    }
+    seen.add(actor);
+    const depth = getActorDepth(parent, seen) + 1;
+    depthByActor.set(actor, depth);
+    return depth;
+  };
+
+  const orderedActors: string[] = [];
+  const visitedActors = new Set<string>();
+  const visitActor = (actor: string) => {
+    if (visitedActors.has(actor)) {
+      return;
+    }
+    visitedActors.add(actor);
+    orderedActors.push(actor);
+    (childrenByActor.get(actor) || []).sort(compareActors).forEach(visitActor);
+  };
+
+  [...actorIds]
+    .filter((actor) => !parentAgentByActor.has(actor))
+    .sort(compareActors)
+    .forEach(visitActor);
+  [...actorIds].sort(compareActors).forEach(visitActor);
+
+  const leftX = 126;
+  const columnGap = 256;
+  const rowGap = 116;
+  const blockGap = 28;
+  const agentWidth = 220;
+  const agentHeight = 116;
+  const taskWidth = 248;
+  const taskHeight = 106;
+  let cursorY = 88;
+
+  for (const actor of orderedActors) {
+    const ownedActiveTasks = activeTasksByActor.get(actor) || [];
+    const rowCount = Math.max(1, ownedActiveTasks.length);
+    const depth = getActorDepth(actor);
+    const actorX = leftX + depth * columnGap;
+    const actorY = cursorY + ((rowCount - 1) * rowGap) / 2;
+    const agent = agentsById.get(actor) || {};
+    const role =
+      toText(agent.role) || toText(ownedActiveTasks[0]?.role) || "agent";
+    const parentAgentId = parentAgentByActor.get(actor);
+    const nodeType =
+      depth > 0 || isSubagentRole(role) ? "subagent" : "agent";
+    const activeCount = toNumber(agent.activeTasks) ?? ownedActiveTasks.length;
+    const completedCount = toNumber(agent.completedTasks) ?? 0;
+    const failedCount = toNumber(agent.failedTasks) ?? 0;
+    const lastSeenAt =
+      toText(agent.lastSeenAt) || latestByActor.get(actor) || "";
+    const status =
+      toText(agent.status) ||
+      (ownedActiveTasks.length > 0 ? "active" : "idle");
+    const detail =
+      ownedActiveTasks.length === 1
+        ? `running: ${getTaskTitle(ownedActiveTasks[0])}`
+        : `${activeCount} active tasks`;
+    const agentRows: AgentGraphRow[] = [
+      { label: "Role", value: role },
+      { label: "Source", value: toText(agent.source) || "task stream" },
+      { label: "Active", value: String(activeCount) },
+      { label: "Done", value: String(completedCount) },
+      { label: "Failed", value: String(failedCount) },
+      { label: "Seen", value: formatIsoCompact(lastSeenAt) },
+    ];
+    if (parentAgentId) {
+      agentRows.splice(2, 0, { label: "Parent", value: parentAgentId });
+    }
+
     nodes.push({
-      id: `task:${toText(task.id) || index}`,
-      type: "task",
-      label: toText(task.title) || toText(task.id) || "task",
-      detail:
-        toText(task.reasoning) ||
-        toText(task.description) ||
-        `${toText(task.actor) || "agent"} / ${toText(task.status) || "active"}`,
-      status: toText(task.status) || "active",
-      x: 390,
-      y: 55 + index * 56,
+      id: `agent:${actor}`,
+      type: nodeType,
+      label: actor,
+      detail,
+      rows: agentRows.slice(0, 6),
+      status,
+      x: actorX,
+      y: actorY,
+      width: agentWidth,
+      height: agentHeight,
+      parentAgentId,
     });
-  });
+
+    ownedActiveTasks.forEach((task, index) => {
+      const taskId = toText(task.id) || `${actor}:${index}`;
+      const taskRole = toText(task.role) || role;
+      nodes.push({
+        id: `task:${taskId}`,
+        type: "task",
+        label: getTaskTitle(task),
+        detail: getTaskDetail(task),
+        rows: [
+          { label: "Agent", value: actor },
+          { label: "Role", value: taskRole },
+          { label: "Task", value: taskId },
+          { label: "Parent", value: toText(task.parentTaskId) || "root" },
+          { label: "Project", value: toText(task.project) || "global" },
+          { label: "Status", value: toText(task.status) || "active" },
+        ],
+        status: toText(task.status) || "active",
+        x: actorX + columnGap,
+        y: cursorY + index * rowGap,
+        width: taskWidth,
+        height: taskHeight,
+        actorId: actor,
+        taskId,
+      });
+    });
+
+    cursorY += Math.max(agentHeight, rowCount * rowGap) + blockGap;
+  }
+
   return nodes;
 }
 
 function renderAgentGraphSvg(
-  nodes: Array<{
-    id: string;
-    type: string;
-    label: string;
-    detail: string;
-    status: string;
-    x: number;
-    y: number;
-  }>,
+  nodes: AgentGraphNode[],
   edges: JsonResult[],
-  tasks: JsonResult[],
 ): string {
   if (nodes.length === 0) {
-    return `<div class="muted" style="padding:16px;">No graph data yet. Record events and edges to inspect agent swarms.</div>`;
+    return `<div class="muted" style="padding:16px;">No active tasks right now. Completed and failed work stays available in Operations.</div>`;
   }
   const byId = new Map(nodes.map((node) => [node.id, node]));
-  const taskLines = tasks
-    .slice(0, 120)
-    .map((task) => {
-      const taskId = toText(task.id);
-      const actor = toText(task.actor) || toText(task.source);
-      if (!taskId || !actor) {
-        return "";
-      }
-      const taskNode = byId.get(`task:${taskId}`);
-      const agentNode = byId.get(`agent:${actor}`);
-      const parentTaskId = toText(task.parentTaskId);
-      const parentNode = parentTaskId
-        ? byId.get(`task:${parentTaskId}`)
+  const viewBoxWidth = Math.max(
+    680,
+    Math.ceil(Math.max(...nodes.map((node) => node.x + node.width / 2)) + 24),
+  );
+  const viewBoxHeight = Math.max(
+    380,
+    Math.ceil(Math.max(...nodes.map((node) => node.y + node.height / 2)) + 32),
+  );
+  const renderConnection = (
+    from: AgentGraphNode,
+    to: AgentGraphNode,
+    className: string,
+    stroke: string,
+    width: number,
+    opacity = 0.86,
+  ) => {
+    const leftToRight = from.x <= to.x;
+    const fromX = leftToRight
+      ? from.x + from.width / 2
+      : from.x - from.width / 2;
+    const toX = leftToRight ? to.x - to.width / 2 : to.x + to.width / 2;
+    const midX = fromX + (toX - fromX) / 2;
+    return `<path class="map-edge ${className}" d="M ${fromX} ${from.y} C ${midX} ${from.y}, ${midX} ${to.y}, ${toX} ${to.y}" stroke="${stroke}" stroke-width="${width}" fill="none" opacity="${opacity}" />`;
+  };
+  const spawnLines = nodes
+    .filter((node) => node.type !== "task" && node.parentAgentId)
+    .map((node) => {
+      const parent = node.parentAgentId
+        ? byId.get(`agent:${node.parentAgentId}`)
         : undefined;
-      const ownership =
-        taskNode && agentNode
-          ? `<line x1="${agentNode.x}" y1="${agentNode.y}" x2="${taskNode.x}" y2="${taskNode.y}" stroke="oklch(0.72 0.14 155)" stroke-width="2" opacity="0.75" />`
-          : "";
-      const delegation =
-        taskNode && parentNode
-          ? `<line x1="${parentNode.x}" y1="${parentNode.y}" x2="${taskNode.x}" y2="${taskNode.y}" stroke="oklch(0.78 0.14 80)" stroke-width="1.5" stroke-dasharray="5 5" opacity="0.8" />`
-          : "";
-      return `${ownership}${delegation}`;
+      return parent
+        ? renderConnection(
+            parent,
+            node,
+            "map-edge-active map-edge-spawn",
+            "oklch(0.78 0.14 80)",
+            1.7,
+          )
+        : "";
+    })
+    .join("");
+  const taskLines = nodes
+    .filter((node) => node.type === "task")
+    .map((node) => {
+      const owner = node.actorId ? byId.get(`agent:${node.actorId}`) : undefined;
+      return owner
+        ? renderConnection(
+            owner,
+            node,
+            "map-edge-active map-edge-ownership",
+            "oklch(0.72 0.14 155)",
+            1.8,
+            0.82,
+          )
+        : "";
     })
     .join("");
   const persistedLines = edges
@@ -2351,7 +2623,14 @@ function renderAgentGraphSvg(
       if (!from || !to) {
         return "";
       }
-      return `<line x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" stroke="oklch(0.58 0.05 248)" stroke-width="1.5" />`;
+      return renderConnection(
+        from,
+        to,
+        "map-edge-persisted",
+        "oklch(0.58 0.05 248)",
+        1.4,
+        0.45,
+      );
     })
     .join("");
   const renderedNodes = nodes
@@ -2359,9 +2638,9 @@ function renderAgentGraphSvg(
       const fill =
         node.type === "agent"
           ? "oklch(0.72 0.14 155)"
-          : node.type === "task"
-            ? "oklch(0.7 0.12 235)"
-            : "oklch(0.78 0.14 80)";
+          : node.type === "subagent"
+            ? "oklch(0.78 0.14 80)"
+            : "oklch(0.7 0.12 235)";
       const stroke =
         node.status === "failed"
           ? "oklch(0.68 0.16 35)"
@@ -2370,11 +2649,55 @@ function renderAgentGraphSvg(
             : node.status === "active"
               ? "oklch(0.72 0.14 155)"
               : "oklch(0.38 0.03 248)";
-      const width = node.type === "task" ? 380 : 270;
-      return `<g class="map-node" data-node-id="${escapeHtml(node.id)}"><title>${escapeHtml(`${node.label}: ${node.detail}`)}</title><rect x="${node.x - 12}" y="${node.y - 24}" width="${width}" height="48" rx="7" fill="oklch(0.23 0.02 248)" stroke="${stroke}" /><circle cx="${node.x}" cy="${node.y - 5}" r="8" fill="${fill}" /><text x="${node.x + 17}" y="${node.y - 5}" fill="oklch(0.94 0.008 248)" font-size="12" font-weight="700">${escapeHtml(clipLabel(node.label, node.type === "task" ? 42 : 28))}</text><text x="${node.x + 17}" y="${node.y + 12}" fill="oklch(0.72 0.018 248)" font-size="10">${escapeHtml(clipLabel(node.detail, node.type === "task" ? 54 : 32))}</text></g>`;
+      const statusClass = cssClassToken(node.status);
+      const left = node.x - node.width / 2;
+      const top = node.y - node.height / 2;
+      const titleX = left + 14;
+      const valueX = left + 66;
+      const rowStart = top + (node.type === "task" ? 47 : 50);
+      const rowGap = node.type === "task" ? 11 : 12;
+      const titleLimit = node.type === "task" ? 27 : 24;
+      const detailLimit = node.type === "task" ? 38 : 34;
+      const valueLimit = node.type === "task" ? 31 : 27;
+      const rows = node.rows
+        .slice(0, 6)
+        .map(
+          (row, index) =>
+            `<text x="${titleX}" y="${rowStart + index * rowGap}" fill="oklch(0.66 0.018 248)" font-size="8.2" font-weight="700">${escapeHtml(row.label)}</text><text x="${valueX}" y="${rowStart + index * rowGap}" fill="oklch(0.86 0.01 248)" font-size="8.2">${escapeHtml(clipLabel(row.value, valueLimit))}</text>`,
+        )
+        .join("");
+      return `<g class="map-node map-node-${escapeHtml(node.type)} status-${escapeHtml(statusClass)}" data-node-id="${escapeHtml(node.id)}"><title>${escapeHtml(`${node.label}: ${node.detail}`)}</title><rect class="map-node-card" x="${left}" y="${top}" width="${node.width}" height="${node.height}" rx="7" fill="oklch(0.23 0.02 248)" stroke="${stroke}" /><circle class="map-node-dot" cx="${titleX}" cy="${top + 17}" r="5.5" fill="${fill}" /><text x="${titleX + 13}" y="${top + 20}" fill="oklch(0.94 0.008 248)" font-size="12" font-weight="750">${escapeHtml(clipLabel(node.label, titleLimit))}</text><text x="${titleX}" y="${top + 36}" fill="oklch(0.72 0.018 248)" font-size="9">${escapeHtml(clipLabel(node.detail, detailLimit))}</text>${rows}</g>`;
     })
     .join("");
-  return `<svg viewBox="0 0 980 760" role="img" aria-label="Live v2 agent task graph"><text x="20" y="28" fill="oklch(0.72 0.018 248)" font-size="11">solid: agent owns task / dashed: parent to subtask / node detail shows current task or reasoning</text>${taskLines}${persistedLines}${renderedNodes}</svg>`;
+  return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" style="min-width:${viewBoxWidth}px;" role="img" aria-label="Live v2 active agent and task graph"><text x="18" y="26" fill="oklch(0.72 0.018 248)" font-size="11">left: agents / middle: spawned subagents / right: active tasks / animated lines show live ownership</text>${spawnLines}${taskLines}${persistedLines}${renderedNodes}</svg>`;
+}
+
+function getTaskActor(task: JsonResult): string {
+  return toText(task.actor) || toText(task.source) || "unknown";
+}
+
+function getTaskTitle(task: JsonResult): string {
+  return (
+    toText(task.title) ||
+    toText(task.summary) ||
+    toText(task.id) ||
+    "active task"
+  );
+}
+
+function getTaskDetail(task: JsonResult): string {
+  return (
+    toText(task.reasoning) ||
+    toText(task.description) ||
+    toText(task.latestEventType) ||
+    toText(task.id) ||
+    "No task detail recorded."
+  );
+}
+
+function isSubagentRole(role: string | undefined): boolean {
+  const normalized = role?.toLowerCase() || "";
+  return normalized.includes("subagent") || normalized.includes("sub-agent");
 }
 
 function clipLabel(value: string, maxLength: number): string {
@@ -3356,14 +3679,14 @@ function getQuickInputSidebarHtml(): string {
       <div class="row"><span class="k">DB</span><span id="statusDb">n/a</span></div>
       <div class="row"><span class="k">Updated</span><span id="statusUpdated">n/a</span></div>
       <div class="actions">
-        <button class="primary" data-open-modal="observation">Add Memory</button>
-        <button data-open-modal="summary">Save Summary</button>
+        <button data-open-modal="observation">Add Memory</button>
+        <button data-open-modal="summary">Add Summary</button>
         <button data-action="open-dashboard">Dashboard</button>
         <button data-action="doctor">Doctor</button>
         <button data-action="sync-tasks">Sync Tasks</button>
         <button data-action="refresh-status">Refresh</button>
+        <button data-action="setup">Install MCP</button>
       </div>
-      <div class="note" style="margin-top:8px;">Setup and path settings stay in the Command Palette, keeping this view focused on daily capture.</div>
     </section>
 
     <div id="modalBackdrop" class="modal-backdrop" aria-hidden="true" data-close-modal>
@@ -4436,6 +4759,15 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function cssClassToken(value: string | undefined): string {
+  return (
+    value
+      ?.toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "unknown"
+  );
 }
 
 function formatUptime(seconds: number | undefined): string {

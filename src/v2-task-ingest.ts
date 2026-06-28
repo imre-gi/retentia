@@ -69,6 +69,24 @@ interface ClaudeTaskPending {
   metadata?: Record<string, unknown>;
 }
 
+interface CodexSpawnRecord {
+  childSessionId: string;
+  parentSessionId: string;
+  parentTurnId: string;
+  parentTaskId: string;
+  nickname?: string;
+  timestamp?: string;
+}
+
+interface CodexThreadMetadata {
+  sessionId: string;
+  threadSource?: string;
+  parentThreadId?: string;
+  agentNickname?: string;
+  agentRole?: string;
+  parentTaskId?: string;
+}
+
 const DEFAULT_LOOKBACK_DAYS = 7;
 const DEFAULT_MAX_FILES_PER_PROVIDER = 80;
 const DEFAULT_MAX_IMPORT = 300;
@@ -141,12 +159,6 @@ export function ingestV2TaskEvents(
       continue;
     }
 
-    if (engine.hasImportedEvent(event.externalKey)) {
-      skippedEvents += 1;
-      counter.skipped += 1;
-      continue;
-    }
-
     try {
       const saved = engine.addImportedEvent(event.externalKey, event.input);
       if (saved.imported) {
@@ -205,12 +217,20 @@ function collectProviderEvents(
     options.lookbackDays,
   );
   const events: CandidateEvent[] = [];
+  const codexSpawnIndex =
+    provider === "codex" ? buildCodexSpawnIndex(files) : undefined;
 
   for (const filePath of files) {
     if (provider === "copilot") {
       events.push(...parseCopilotEvents(filePath, options.fallbackProject));
     } else if (provider === "codex") {
-      events.push(...parseCodexEvents(filePath, options.fallbackProject));
+      events.push(
+        ...parseCodexEvents(
+          filePath,
+          options.fallbackProject,
+          codexSpawnIndex,
+        ),
+      );
     } else {
       events.push(...parseClaudeEvents(filePath, options.fallbackProject));
     }
@@ -481,24 +501,64 @@ function parseCopilotEvents(
 function parseCodexEvents(
   filePath: string,
   fallbackProject?: string,
+  spawnIndex: Map<string, CodexSpawnRecord> = new Map(),
 ): CandidateEvent[] {
   const events: CandidateEvent[] = [];
   let sessionId = inferSessionIdFromPath(filePath) || "codex-session";
   let sessionMetadata: Record<string, unknown> = {};
   let turnMetadata: Record<string, unknown> = {};
+  let threadMetadata: CodexThreadMetadata = { sessionId };
 
   for (const root of readJsonLines(filePath)) {
     const recordType = asText(root.type);
     if (recordType === "session_meta") {
       const payload = asRecord(root.payload);
+      const source = asRecord(payload.source);
+      const subagent = asRecord(source.subagent);
+      const threadSpawn = asRecord(subagent.thread_spawn);
       sessionId =
         asText(payload.id) ||
         asText(payload.session_id) ||
         asText(root.session_id) ||
         sessionId;
+      const spawn = spawnIndex.get(sessionId);
+      const parentThreadId =
+        asText(payload.parent_thread_id) ||
+        asText(payload.parentThreadId) ||
+        asText(threadSpawn.parent_thread_id) ||
+        asText(threadSpawn.parentThreadId) ||
+        spawn?.parentSessionId;
+      const agentNickname =
+        asText(payload.agent_nickname) ||
+        asText(payload.agentNickname) ||
+        asText(threadSpawn.agent_nickname) ||
+        asText(threadSpawn.agentNickname) ||
+        spawn?.nickname;
+      const agentRole =
+        asText(payload.agent_role) ||
+        asText(payload.agentRole) ||
+        asText(threadSpawn.agent_role) ||
+        asText(threadSpawn.agentRole);
+      const threadSource =
+        asText(payload.thread_source) ||
+        asText(payload.threadSource) ||
+        (parentThreadId ? "subagent" : undefined);
+      threadMetadata = {
+        sessionId,
+        threadSource,
+        parentThreadId,
+        agentNickname,
+        agentRole,
+        parentTaskId: spawn?.parentTaskId,
+      };
       sessionMetadata = {
         provider: "codex",
         sessionId,
+        threadSource,
+        parentThreadId,
+        agentNickname,
+        agentRole,
+        parentTaskId: spawn?.parentTaskId,
         model: asText(payload.model) || asText(root.model),
         cwd:
           asText(payload.cwd) ||
@@ -583,10 +643,13 @@ function parseCodexEvents(
           ? "tool_call"
           : "message";
       const taskId = `codex:${sessionId}:turn:${turnId}`;
+      const identity = getCodexThreadIdentity(threadMetadata);
       const tags = [
         "provider:codex",
         `session:${toTagValue(sessionId)}`,
         `type:${toTagValue(itemType)}`,
+        ...tagIf("agent", identity.actor),
+        ...tagIf("parent-session", threadMetadata.parentThreadId),
         ...tagIf("model", model),
         ...tagIf("tool", toolName),
       ];
@@ -598,9 +661,10 @@ function parseCodexEvents(
         input: {
           type: eventType,
           source: "codex",
-          actor: "codex",
-          role: "agent",
+          actor: identity.actor,
+          role: identity.role,
           taskId,
+          parentTaskId: identity.parentTaskId,
           project,
           summary: clip(summary, 240),
           tags,
@@ -614,6 +678,11 @@ function parseCodexEvents(
             model,
             cwd,
             toolName,
+            threadSource: threadMetadata.threadSource,
+            parentThreadId: threadMetadata.parentThreadId,
+            parentTaskId: identity.parentTaskId,
+            agentNickname: threadMetadata.agentNickname,
+            agentRole: threadMetadata.agentRole,
             content: clip(summary, 5000),
             taskDescription: clip(summary, 1200),
             metadata: {
@@ -625,6 +694,7 @@ function parseCodexEvents(
               model,
               cwd,
               toolName,
+              thread: threadMetadata,
               session: sessionMetadata,
               turn: turnMetadata,
             },
@@ -660,12 +730,17 @@ function parseCodexEvents(
       extractTextFromValue(payload.error) ||
       `Codex ${payloadType}`;
     const eventType =
-      normalizedType.includes("fail") || normalizedType.includes("error")
+      normalizedType.includes("fail") ||
+      normalizedType.includes("error") ||
+      normalizedType.includes("abort") ||
+      normalizedType.includes("cancel") ||
+      normalizedType.includes("interrupt")
         ? "task_failed"
         : normalizedType.includes("complete") || normalizedType.includes("end")
           ? "task_completed"
           : "task_started";
     const taskId = `codex:${sessionId}:turn:${turnId}`;
+    const identity = getCodexThreadIdentity(threadMetadata);
     const model =
       asText(payload.model) ||
       asText(root.model) ||
@@ -687,15 +762,18 @@ function parseCodexEvents(
       input: {
         type: eventType,
         source: "codex",
-        actor: "codex",
-        role: "agent",
+        actor: identity.actor,
+        role: identity.role,
         taskId,
+        parentTaskId: identity.parentTaskId,
         project,
         summary: clip(summary, 240),
         tags: [
           "provider:codex",
           `session:${toTagValue(sessionId)}`,
           `type:${toTagValue(payloadType)}`,
+          ...tagIf("agent", identity.actor),
+          ...tagIf("parent-session", threadMetadata.parentThreadId),
           ...tagIf("model", model),
         ],
         payload: {
@@ -705,6 +783,11 @@ function parseCodexEvents(
           turnId,
           model,
           cwd,
+          threadSource: threadMetadata.threadSource,
+          parentThreadId: threadMetadata.parentThreadId,
+          parentTaskId: identity.parentTaskId,
+          agentNickname: threadMetadata.agentNickname,
+          agentRole: threadMetadata.agentRole,
           payload,
           taskDescription: clip(summary, 1200),
           reasoningSummary: clip(
@@ -720,6 +803,7 @@ function parseCodexEvents(
             eventType: payloadType,
             model,
             cwd,
+            thread: threadMetadata,
             session: sessionMetadata,
             turn: turnMetadata,
           },
@@ -730,6 +814,119 @@ function parseCodexEvents(
   }
 
   return events;
+}
+
+function buildCodexSpawnIndex(files: string[]): Map<string, CodexSpawnRecord> {
+  const index = new Map<string, CodexSpawnRecord>();
+
+  for (const filePath of files) {
+    let sessionId = inferSessionIdFromPath(filePath) || "codex-session";
+    let currentTurnId = "";
+
+    for (const root of readJsonLines(filePath)) {
+      const recordType = asText(root.type);
+      if (recordType === "session_meta") {
+        const payload = asRecord(root.payload);
+        sessionId =
+          asText(payload.id) ||
+          asText(payload.session_id) ||
+          asText(root.session_id) ||
+          sessionId;
+        continue;
+      }
+
+      if (recordType === "turn_context") {
+        const payload = asRecord(root.payload);
+        currentTurnId =
+          asText(payload.turn_id) ||
+          asText(payload.turnId) ||
+          asText(root.turn_id) ||
+          asText(root.id) ||
+          currentTurnId;
+        continue;
+      }
+
+      if (recordType !== "response_item") {
+        continue;
+      }
+
+      const payload = asRecord(root.payload);
+      const itemType = asText(payload.type) || asText(root.item_type);
+      if (itemType !== "function_call_output") {
+        continue;
+      }
+
+      const turnId =
+        asText(payload.turn_id) ||
+        asText(payload.turnId) ||
+        currentTurnId ||
+        asText(root.id);
+      if (!turnId) {
+        continue;
+      }
+
+      const spawn = parseCodexSpawnOutput(asText(payload.output));
+      if (!spawn?.childSessionId) {
+        continue;
+      }
+
+      index.set(spawn.childSessionId, {
+        childSessionId: spawn.childSessionId,
+        parentSessionId: sessionId,
+        parentTurnId: turnId,
+        parentTaskId: `codex:${sessionId}:turn:${turnId}`,
+        nickname: spawn.nickname,
+        timestamp: asText(root.timestamp) || asText(payload.timestamp),
+      });
+    }
+  }
+
+  return index;
+}
+
+function parseCodexSpawnOutput(
+  output: string | undefined,
+): Pick<CodexSpawnRecord, "childSessionId" | "nickname"> | undefined {
+  if (!output) {
+    return undefined;
+  }
+  const parsed = parseJsonObject(output.trim());
+  const childSessionId =
+    asText(parsed.agent_id) ||
+    asText(parsed.agentId) ||
+    asText(parsed.id) ||
+    asText(parsed.session_id) ||
+    asText(parsed.sessionId);
+  if (!childSessionId) {
+    return undefined;
+  }
+  return {
+    childSessionId,
+    nickname: asText(parsed.nickname) || asText(parsed.agent_nickname),
+  };
+}
+
+function getCodexThreadIdentity(thread: CodexThreadMetadata): {
+  actor: string;
+  role: string;
+  parentTaskId?: string;
+} {
+  const isSubagent =
+    thread.threadSource === "subagent" ||
+    Boolean(thread.parentThreadId || thread.agentNickname);
+  if (!isSubagent) {
+    return { actor: "codex", role: "agent" };
+  }
+  return {
+    actor: thread.agentNickname || thread.sessionId,
+    role: formatCodexSubagentRole(thread.agentRole),
+    parentTaskId: thread.parentTaskId,
+  };
+}
+
+function formatCodexSubagentRole(role?: string): string {
+  const cleanRole = role?.trim();
+  return cleanRole ? `subagent:${cleanRole}` : "subagent";
 }
 
 function parseClaudeEvents(
@@ -1160,6 +1357,17 @@ function asRecord(value: unknown): Record<string, unknown> {
     return {};
   }
   return value as Record<string, unknown>;
+}
+
+function parseJsonObject(value: string): Record<string, unknown> {
+  if (!value.startsWith("{")) {
+    return {};
+  }
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    return {};
+  }
 }
 
 function asText(value: unknown): string | undefined {

@@ -148,6 +148,30 @@ describe("V2MemoryEngine", () => {
     });
   });
 
+  test("flags dashboard memories below 90 percent confidence for review", () => {
+    withEngine((engine) => {
+      engine.addMemory({
+        kind: "fact",
+        project: "retentia",
+        title: "Needs review",
+        body: "This memory is useful but should be reviewed before reuse.",
+        confidence: 0.89,
+      });
+      engine.addMemory({
+        kind: "fact",
+        project: "retentia",
+        title: "High confidence",
+        body: "This memory has enough confidence for normal reuse.",
+        confidence: 0.9,
+      });
+
+      const dashboard = engine.buildDashboard(10);
+
+      expect(dashboard.quality.lowConfidence).toBe(1);
+      expect(dashboard.quality.highConfidence).toBe(1);
+    });
+  });
+
   test("explains hybrid retrieval boosts from graph and evidence", () => {
     withEngine((engine) => {
       const memory = engine.addMemory({
@@ -303,6 +327,246 @@ describe("V2MemoryEngine", () => {
       expect(
         dashboard.agents.find((agent) => agent.id === "ui-subagent")?.status,
       ).toBe("active");
+    });
+  });
+
+  test("keeps a parent task active while completed subagents are recorded as done", () => {
+    withEngine((engine) => {
+      engine.addEvent({
+        type: "task_started",
+        source: "codex",
+        actor: "coordinator",
+        role: "agent",
+        taskId: "task-root",
+        project: "Development",
+        summary: "Coordinate five repo scans",
+      });
+
+      for (let index = 1; index <= 5; index += 1) {
+        const actor = `subagent-${index}`;
+        const taskId = `task-child-${index}`;
+        engine.addEvent({
+          type: "subagent_started",
+          source: "codex",
+          actor,
+          role: "subagent",
+          taskId,
+          parentTaskId: "task-root",
+          project: "Development",
+          summary: `${actor} started`,
+        });
+        engine.addEvent({
+          type: "subagent_completed",
+          source: "codex",
+          actor,
+          role: "subagent",
+          taskId,
+          parentTaskId: "task-root",
+          project: "Development",
+          summary: `${actor} completed`,
+        });
+      }
+
+      const dashboard = engine.buildDashboard(30);
+      const parent = dashboard.tasks.find((task) => task.id === "task-root");
+      const childTasks = dashboard.tasks.filter((task) =>
+        task.id.startsWith("task-child-"),
+      );
+
+      expect(parent?.status).toBe("active");
+      expect(childTasks).toHaveLength(5);
+      expect(childTasks.every((task) => task.status === "completed")).toBe(
+        true,
+      );
+      expect(
+        dashboard.agents.filter(
+          (agent) =>
+            agent.id.startsWith("subagent-") && agent.status === "completed",
+        ),
+      ).toHaveLength(5);
+      expect(
+        dashboard.agents.find((agent) => agent.id === "coordinator")?.status,
+      ).toBe("active");
+    });
+  });
+
+  test("links Codex subagent sessions to the parent spawn task", () => {
+    withEngine((engine) => {
+      const dir = mkdtempSync(join(tmpdir(), "retentia-v2-codex-subagent-"));
+      const codexDir = join(dir, "codex");
+      mkdirSync(codexDir, { recursive: true });
+
+      writeFileSync(
+        join(codexDir, "parent-session.jsonl"),
+        [
+          JSON.stringify({
+            type: "session_meta",
+            payload: {
+              id: "parent-session",
+              model: "gpt-5-codex",
+              cwd: "/workspace/retentia",
+            },
+          }),
+          JSON.stringify({
+            type: "turn_context",
+            payload: {
+              turn_id: "parent-turn",
+              model: "gpt-5-codex",
+              cwd: "/workspace/retentia",
+            },
+          }),
+          JSON.stringify({
+            type: "response_item",
+            timestamp: "2026-05-20T20:00:01.000Z",
+            payload: {
+              type: "function_call_output",
+              call_id: "call-spawn",
+              output: JSON.stringify({
+                agent_id: "child-session",
+                nickname: "Singer",
+              }),
+            },
+          }),
+        ].join("\n"),
+      );
+
+      writeFileSync(
+        join(codexDir, "child-session.jsonl"),
+        [
+          JSON.stringify({
+            type: "session_meta",
+            payload: {
+              id: "child-session",
+              parent_thread_id: "parent-session",
+              thread_source: "subagent",
+              agent_nickname: "Singer",
+              agent_role: "explorer",
+              model: "gpt-5-codex",
+              cwd: "/workspace/retentia",
+            },
+          }),
+          JSON.stringify({
+            type: "event_msg",
+            timestamp: "2026-05-20T20:00:02.000Z",
+            payload: {
+              type: "task_started",
+              turn_id: "child-turn",
+              last_agent_message: "Singer is scanning Fred-Client.",
+            },
+          }),
+        ].join("\n"),
+      );
+
+      try {
+        const result = ingestV2TaskEvents(engine, {
+          providers: ["codex"],
+          codexPath: codexDir,
+          fallbackProject: "retentia",
+          maxImport: 50,
+        });
+        const second = ingestV2TaskEvents(engine, {
+          providers: ["codex"],
+          codexPath: codexDir,
+          fallbackProject: "retentia",
+          maxImport: 50,
+        });
+        const dashboard = engine.buildDashboard(20);
+        const parentTaskId = "codex:parent-session:turn:parent-turn";
+        const childTask = dashboard.tasks.find(
+          (task) => task.id === "codex:child-session:turn:child-turn",
+        );
+        const childEvent = dashboard.recentEvents.find(
+          (event) => event.actor === "Singer",
+        );
+        const childPayload = childEvent?.payload as
+          | Record<string, unknown>
+          | undefined;
+
+        expect(result.importedEvents).toBe(2);
+        expect(second.importedEvents).toBe(0);
+        expect(second.skippedEvents).toBe(2);
+        expect(dashboard.tasks.some((task) => task.id === parentTaskId)).toBe(
+          true,
+        );
+        expect(childTask).toMatchObject({
+          actor: "Singer",
+          role: "subagent:explorer",
+          parentTaskId,
+        });
+        expect(dashboard.agents.find((agent) => agent.id === "Singer")).toMatchObject({
+          role: "subagent:explorer",
+          activeTasks: 1,
+        });
+        expect(childPayload).toMatchObject({
+          agentNickname: "Singer",
+          agentRole: "explorer",
+          parentThreadId: "parent-session",
+          parentTaskId,
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test("marks aborted Codex turns as failed instead of active", () => {
+    withEngine((engine) => {
+      const dir = mkdtempSync(join(tmpdir(), "retentia-v2-codex-abort-"));
+      const codexDir = join(dir, "codex");
+      mkdirSync(codexDir, { recursive: true });
+
+      writeFileSync(
+        join(codexDir, "aborted-session.jsonl"),
+        [
+          JSON.stringify({
+            type: "session_meta",
+            payload: {
+              id: "aborted-session",
+              model: "gpt-5-codex",
+              cwd: "/workspace/retentia",
+              thread_source: "subagent",
+              parent_thread_id: "parent-session",
+              agent_nickname: "Rawls",
+              agent_role: "explorer",
+            },
+          }),
+          JSON.stringify({
+            type: "event_msg",
+            timestamp: "2026-05-20T20:00:02.000Z",
+            payload: {
+              type: "turn_aborted",
+              turn_id: "rawls-turn",
+              last_agent_message: "Rawls was stopped while scanning.",
+            },
+          }),
+        ].join("\n"),
+      );
+
+      try {
+        ingestV2TaskEvents(engine, {
+          providers: ["codex"],
+          codexPath: codexDir,
+          fallbackProject: "retentia",
+          maxImport: 50,
+        });
+
+        const dashboard = engine.buildDashboard(20);
+        const rawlsTask = dashboard.tasks.find(
+          (task) => task.id === "codex:aborted-session:turn:rawls-turn",
+        );
+        const rawlsAgent = dashboard.agents.find(
+          (agent) => agent.id === "Rawls",
+        );
+
+        expect(rawlsTask?.status).toBe("failed");
+        expect(rawlsAgent).toMatchObject({
+          status: "failed",
+          activeTasks: 0,
+          failedTasks: 1,
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 

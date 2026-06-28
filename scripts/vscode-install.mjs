@@ -416,6 +416,13 @@ function installFlow() {
     ROOT_DIR,
     true,
   );
+  log("Ensuring Codex config.toml contains Retentia MCP");
+  const codexConfig = writeCodexMcpConfigToml();
+  log(
+    `Codex Retentia MCP config: ${codexConfig.path}${
+      codexConfig.changed ? "" : " (already current)"
+    }`,
+  );
 
   log("Writing Claude Code MCP config reference");
   writeClaudeCodeConfigReference();
@@ -501,6 +508,64 @@ function writeVsCodeMcpConfigs() {
     writeJson(configPath, parsed);
     log(`VS Code Retentia MCP config: ${configPath}`);
   }
+}
+
+function writeCodexMcpConfigToml() {
+  const configPath =
+    process.env.RETENTIA_CODEX_CONFIG ||
+    join(homedir(), ".codex", "config.toml");
+  const header = "[mcp_servers.retentia]";
+  const body = [
+    `command = "node"`,
+    `args = ${formatTomlStringArray([
+      join(ROOT_DIR, "dist", "cli.js"),
+      "mcp",
+      "--data-file",
+      join(homedir(), ".retentia", "retentia-v2.db"),
+    ])}`,
+  ];
+
+  mkdirSync(dirname(configPath), { recursive: true });
+  const current = existsSync(configPath)
+    ? readFileSync(configPath, "utf8")
+    : "";
+  const next = upsertTomlSection(current, header, body);
+  if (next !== current) {
+    writeFileSync(configPath, next, "utf8");
+  }
+
+  return { path: configPath, changed: next !== current };
+}
+
+function upsertTomlSection(current, header, body) {
+  const output = [];
+  let skip = false;
+
+  for (const line of current.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === header) {
+      skip = true;
+      continue;
+    }
+    if (skip && /^\[.+\]$/.test(trimmed)) {
+      skip = false;
+    }
+    if (!skip) {
+      output.push(line);
+    }
+  }
+
+  const prefix = output.join("\n").trimEnd();
+  const section = [header, ...body].join("\n");
+  return `${prefix}${prefix ? "\n\n" : ""}${section}\n`;
+}
+
+function formatTomlStringArray(values) {
+  return `[${values.map((value) => `"${escapeTomlString(value)}"`).join(", ")}]`;
+}
+
+function escapeTomlString(value) {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function resolveVsCodeMcpConfigPaths() {

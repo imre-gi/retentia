@@ -55,6 +55,9 @@ const DEFAULT_AUTO_SYNC_LOOKBACK_DAYS = 7;
 const DEFAULT_AUTO_SYNC_MAX_IMPORT = 25;
 const DEFAULT_AUTO_SYNC_MAX_FILES = 24;
 const DEFAULT_DASHBOARD_LIMIT = 600;
+const REVIEW_CONFIDENCE_THRESHOLD = 0.9;
+const PROBABLY_LOW_CONFIDENCE_THRESHOLD = 0.6;
+const STALE_MEMORY_REVIEW_DAYS = 90;
 const OBSERVATION_TYPES = new Set([
   "note",
   "bugfix",
@@ -1205,9 +1208,9 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
         --violet: oklch(0.72 0.1 292);
       }
       * { box-sizing: border-box; }
-      html, body { min-height: 100%; }
-      body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); }
-      .shell { min-height: 100vh; padding: 14px; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 10px; }
+      html, body { width: 100%; height: 100%; min-height: 100%; }
+      body { margin: 0; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); }
+      .shell { width: 100%; height: 100vh; min-height: 0; padding: 14px; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 10px; overflow: hidden; }
       .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid var(--line-soft); background: var(--bg-2); border-radius: 8px; padding: 10px 12px; }
       h1 { margin: 0; font-size: 18px; font-weight: 720; letter-spacing: 0; }
       .sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
@@ -1236,11 +1239,11 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .trend-bar { min-width: 0; border-radius: 4px 4px 0 0; background: var(--blue); position: relative; }
       .trend-bar.failed { background: var(--red); }
       .trend-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; color: var(--muted); font-size: 11px; }
-      .workbench { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, 390px); gap: 10px; }
-      .map-panel, .inspector { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-      .panel-head { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+      .workbench { min-height: 0; height: 100%; max-height: 100%; overflow: hidden; display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, 390px); gap: 10px; }
+      .map-panel, .inspector { min-width: 0; min-height: 0; height: 100%; max-height: 100%; overflow: hidden; display: flex; flex-direction: column; }
+      .panel-head { flex: 0 0 auto; padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
       .panel-head h2 { margin: 0; font-size: 14px; }
-      .graph { flex: 1; min-height: 0; overflow: auto; padding: 10px; background: oklch(0.19 0.018 248); }
+      .graph { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: 10px; background: oklch(0.19 0.018 248); overscroll-behavior: contain; }
       .graph svg { display: block; width: 100%; min-width: 680px; height: auto; min-height: 500px; overflow: visible; }
       .map-edge { stroke-linecap: round; }
       .map-edge-active { stroke-dasharray: 8 10; animation: map-edge-flow 900ms linear infinite; }
@@ -1248,32 +1251,44 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .map-edge-spawn { stroke-dasharray: 5 6; }
       .map-edge-persisted { opacity: .45; }
       .map-node { cursor: pointer; }
+      .map-node text { pointer-events: none; }
       .map-node-card { transition: fill 120ms ease-out, stroke 120ms ease-out, stroke-width 120ms ease-out; }
       .map-node:hover .map-node-card { fill: oklch(0.25 0.024 248); stroke-width: 2; }
       .map-node.selected .map-node-card { stroke: var(--amber); stroke-width: 2; }
       @keyframes map-edge-flow { from { stroke-dashoffset: 18; } to { stroke-dashoffset: 0; } }
-      .inspector-body { min-height: 0; overflow: auto; padding: 12px; display: grid; gap: 12px; }
-      .focus-title { font-size: 16px; font-weight: 760; margin-bottom: 4px; }
+      .inspector-body { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: 12px; display: grid; align-content: start; gap: 12px; overscroll-behavior: contain; }
+      .focus-title { min-width: 0; font-size: 16px; line-height: 1.25; font-weight: 760; margin-bottom: 4px; overflow-wrap: anywhere; }
+      .focus-subtitle { min-width: 0; color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
       .kv { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 6px 10px; font-size: 12px; }
+      .kv > div { min-width: 0; overflow-wrap: anywhere; }
       .kv .key { color: var(--muted); }
-      .section { border-top: 1px solid color-mix(in oklch, var(--line), transparent 35%); padding-top: 10px; }
+      .section { min-width: 0; border-top: 1px solid color-mix(in oklch, var(--line), transparent 35%); padding-top: 10px; }
       .section h3 { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
       ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 7px; }
-      li { border-bottom: 1px solid color-mix(in oklch, var(--line), transparent 45%); padding-bottom: 7px; display: grid; gap: 3px; }
+      li { min-width: 0; border-bottom: 1px solid color-mix(in oklch, var(--line), transparent 45%); padding-bottom: 7px; display: grid; gap: 3px; }
+      li strong, li span { min-width: 0; overflow-wrap: anywhere; }
       li span, .muted { color: var(--muted); }
-      code { color: var(--muted); white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
+      code { max-width: 100%; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
       .state { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px; font-size: 11px; color: var(--muted); }
       .state-active { color: var(--green); border-color: color-mix(in oklch, var(--green), transparent 35%); }
       .state-completed { color: var(--blue); border-color: color-mix(in oklch, var(--blue), transparent 35%); }
       .state-failed { color: var(--red); border-color: color-mix(in oklch, var(--red), transparent 35%); }
       .state-pass { color: var(--green); border-color: color-mix(in oklch, var(--green), transparent 35%); }
       .state-warn { color: var(--amber); border-color: color-mix(in oklch, var(--amber), transparent 35%); }
-      .reasoning, .context { white-space: pre-wrap; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; line-height: 1.45; }
+      .state-bad, .state-fail { color: var(--red); border-color: color-mix(in oklch, var(--red), transparent 35%); }
+      .text-block, .reasoning, .context { min-width: 0; max-width: 100%; margin: 0; white-space: pre-wrap; overflow-x: hidden; overflow-y: auto; overflow-wrap: anywhere; word-break: break-word; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; line-height: 1.45; }
+      .text-block { max-height: 280px; padding: 8px; border: 1px solid var(--line-soft); border-radius: 8px; background: oklch(0.17 0.014 246); }
+      .text-block.compact { max-height: 160px; }
+      .activity-item { gap: 6px; }
+      .activity-meta { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .activity-summary { min-width: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
       .health-plane { padding: 10px 12px; display: grid; gap: 8px; min-width: 0; }
       .health-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
       .health-item { border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-width: 0; }
       .health-item strong { display: block; font-size: 12px; margin-bottom: 4px; }
       .stat-tile { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 10px 12px; min-width: 0; display: grid; gap: 4px; }
+      button.stat-tile { width: 100%; height: 100%; color: inherit; text-align: left; }
+      button.stat-tile:hover { background: oklch(0.24 0.02 248); }
       .insight-grid .stat-tile { height: 76px; align-content: start; overflow: hidden; }
       .stat-tile strong { font-size: 20px; line-height: 1.15; }
       .stat-tile span { color: var(--muted); font-size: 12px; }
@@ -1296,11 +1311,26 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .dist-bar { height: 7px; border-radius: 999px; background: oklch(0.17 0.014 246); overflow: hidden; border: 1px solid var(--line-soft); }
       .dist-fill { height: 100%; width: var(--value); background: var(--violet); }
       .dist-value { color: var(--muted); font-variant-numeric: tabular-nums; }
+      .full-span { grid-column: 1 / -1; }
+      .review-toolbar { display: flex; flex-wrap: wrap; gap: 7px; }
+      .review-filter { color: var(--muted); }
+      .review-filter.active { color: var(--text); border-color: var(--blue); background: color-mix(in oklch, var(--blue), transparent 82%); }
+      .review-summary { color: var(--muted); font-size: 12px; }
+      .memory-review-list { display: grid; gap: 0; max-height: min(54vh, 620px); overflow: auto; overscroll-behavior: contain; border-top: 1px solid var(--line-soft); }
+      .memory-review-item { min-width: 0; padding: 10px 0; display: grid; gap: 8px; }
+      .memory-review-top { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; }
+      .memory-review-title { min-width: 0; display: grid; gap: 3px; }
+      .memory-review-title strong { overflow-wrap: anywhere; }
+      .memory-review-meta, .memory-badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--muted); font-size: 11px; }
+      .badge { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px; color: var(--muted); }
+      .badge.good { color: var(--green); border-color: color-mix(in oklch, var(--green), transparent 45%); }
+      .badge.warn { color: var(--amber); border-color: color-mix(in oklch, var(--amber), transparent 45%); }
+      .badge.bad { color: var(--red); border-color: color-mix(in oklch, var(--red), transparent 45%); }
       .memory-plane { min-height: 0; overflow: auto; padding: 12px; }
       .hidden { display: none; }
       .error { border: 1px solid var(--red); color: var(--red); padding: 10px; border-radius: 8px; margin-bottom: 12px; }
       @media (max-width: 1120px) { .metrics { grid-template-columns: repeat(4, minmax(110px, 1fr)); } .insight-grid, .wide-grid { grid-template-columns: 1fr; } }
-      @media (max-width: 980px) { .metrics, .trend-grid, .workbench { grid-template-columns: 1fr; } .top { align-items: flex-start; flex-direction: column; } .actions { justify-content: flex-start; } .map-panel { min-height: 500px; } .graph svg { min-width: 680px; min-height: 480px; } .health-list { grid-template-columns: 1fr; } }
+      @media (max-width: 980px) { .metrics, .trend-grid, .workbench { grid-template-columns: 1fr; } .workbench { grid-template-rows: minmax(0, 1fr) minmax(0, .8fr); } .top { align-items: flex-start; flex-direction: column; } .actions { justify-content: flex-start; } .graph svg { min-width: 680px; min-height: 480px; } .health-list { grid-template-columns: 1fr; } }
       @media (prefers-reduced-motion: reduce) { .map-edge-active { animation: none; } }
     </style>
   </head>
@@ -1326,6 +1356,7 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       let lastSignature = "";
       let currentView = "control";
       let selectedNodeId = "";
+      let currentReviewFilter = "needs-review";
       let detailsByNode = {};
 
       function setHtml(id, html) {
@@ -1360,6 +1391,33 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
         for (const button of document.querySelectorAll("button[data-view]")) {
           button.classList.toggle("active", button.getAttribute("data-view") === currentView);
         }
+        if (currentView === "quality") applyReviewFilter();
+      }
+
+      function applyReviewFilter() {
+        const filter = currentReviewFilter || "all";
+        let visible = 0;
+        let total = 0;
+        for (const item of document.querySelectorAll("[data-review-filters]")) {
+          total += 1;
+          const filters = String(item.getAttribute("data-review-filters") || "").split(" ");
+          const matches = filter === "all" || filters.includes(filter);
+          item.classList.toggle("hidden", !matches);
+          if (matches) visible += 1;
+        }
+        for (const button of document.querySelectorAll("button[data-review-filter]")) {
+          button.classList.toggle("active", button.getAttribute("data-review-filter") === filter);
+        }
+        const summary = document.getElementById("reviewSummary");
+        if (summary) {
+          const label = document.querySelector(".review-filter[data-review-filter='" + filter + "']")?.getAttribute("data-review-label") || filter;
+          summary.textContent = total ? "Showing " + visible + " of " + total + " loaded memories for " + label + "." : "No loaded memories match this filter.";
+        }
+      }
+
+      function setReviewFilter(filter) {
+        currentReviewFilter = filter || "all";
+        applyReviewFilter();
       }
 
       function requestStreamUpdate() {
@@ -1378,6 +1436,14 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       for (const button of document.querySelectorAll("button[data-view]")) {
         button.addEventListener("click", () => setView(button.getAttribute("data-view") || "control"));
       }
+
+      document.addEventListener("click", (event) => {
+        const target = event.target;
+        const button = target && target.closest ? target.closest("button[data-review-filter]") : null;
+        if (!button) return;
+        setView("quality");
+        setReviewFilter(button.getAttribute("data-review-filter") || "all");
+      });
 
       window.addEventListener("message", (event) => {
         const message = event.data || {};
@@ -1401,6 +1467,7 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
         setHtml("operationsPlane", payload.operationsHtml);
         detailsByNode = payload.detailsByNode || {};
         bindMapNodes(String(payload.defaultNodeId || ""));
+        applyReviewFilter();
         setView(currentView);
       });
 
@@ -1610,20 +1677,24 @@ function renderQualityPlane(
   totals: JsonResult,
   quality: JsonResult,
 ): string {
-  const sampleHighConfidence = memories.filter(
-    (memory) => (toNumber(memory.confidence) ?? 0) >= 0.8,
+  const activeMemorySample = memories.filter(
+    (memory) => !toBoolean(memory.archived),
+  );
+  const sampleHighConfidence = activeMemorySample.filter(
+    (memory) => (toNumber(memory.confidence) ?? 0) >= REVIEW_CONFIDENCE_THRESHOLD,
   ).length;
-  const sampleLowConfidence = memories.filter(
-    (memory) => (toNumber(memory.confidence) ?? 0) < 0.6,
+  const sampleLowConfidence = activeMemorySample.filter(
+    (memory) => (toNumber(memory.confidence) ?? 0) < REVIEW_CONFIDENCE_THRESHOLD,
   ).length;
   const memoryTotal =
     toNumber(quality.memoryTotal) ??
     toNumber(totals.memories) ??
     memories.length;
   const activeMemoryTotal = toNumber(quality.activeMemoryTotal) ?? memoryTotal;
-  const sampleSize = toNumber(quality.sampleSize) ?? memories.length;
+  const sampleSize = toNumber(quality.sampleSize) ?? activeMemorySample.length;
   const averageConfidence =
-    toNumber(quality.averageConfidence) ?? getAverageConfidence(memories);
+    toNumber(quality.averageConfidence) ??
+    getAverageConfidence(activeMemorySample);
   const highConfidence =
     toNumber(quality.highConfidence) ?? sampleHighConfidence;
   const lowConfidence = toNumber(quality.lowConfidence) ?? sampleLowConfidence;
@@ -1634,6 +1705,8 @@ function renderQualityPlane(
     toNumber(quality.evidenceChunks) ?? toNumber(totals.evidenceChunks) ?? 0;
   const evidenceCoverage = toNumber(quality.evidenceCoverage);
   const staleMemories = toNumber(quality.staleMemories) ?? 0;
+  const nowMs = Date.now();
+  const reviewCounts = getMemoryReviewCounts(memories, nowMs);
   const usedChars = toNumber(contextPreview.usedChars) ?? 0;
   const maxChars = toNumber(contextPreview.maxChars) ?? 0;
   const contextRatio = maxChars > 0 ? usedChars / maxChars : 0;
@@ -1660,26 +1733,217 @@ function renderQualityPlane(
 
   return `
     <div class="insight-grid">
-      ${renderInsightMetric("Memories", String(activeMemoryTotal), activeDetail, activeMemoryTotal > 0 ? "good" : "warn")}
-      ${renderInsightMetric("Needs review", String(lowConfidence), "Confidence below 60%", lowConfidence === 0 ? "good" : lowConfidence < Math.max(5, activeMemoryTotal * 0.08) ? "warn" : "bad")}
+      ${renderReviewMetric("Memories", String(activeMemoryTotal), activeDetail, "all", activeMemoryTotal > 0 ? "good" : "warn")}
+      ${renderReviewMetric("Needs review", String(lowConfidence), "Confidence below 90%", "needs-review", lowConfidence === 0 ? "good" : lowConfidence < Math.max(5, activeMemoryTotal * 0.08) ? "warn" : "bad")}
       ${renderInsightMetric("Linked evidence", evidenceValue, evidenceDetail, evidenceCoverage === undefined ? "warn" : evidenceCoverage >= 1 ? "good" : "warn")}
-      ${renderInsightMetric("Pinned memories", String(pinnedTotal), "Favored during retrieval", pinnedTotal > 0 ? "good" : "warn")}
+      ${renderReviewMetric("Pinned memories", String(pinnedTotal), "Favored during retrieval", "pinned", pinnedTotal > 0 ? "good" : "warn")}
       ${renderInsightMetric("Last update", formatRelativeTime(lastMemoryUpdatedAt), lastMemoryUpdatedAt ? formatIsoCompact(lastMemoryUpdatedAt) : "No durable memory yet", lastMemoryUpdatedAt ? "good" : "warn")}
-      ${renderInsightMetric("Stale memories", String(staleMemories), "Not updated in 90 days", staleMemories === 0 ? "good" : "warn")}
+      ${renderReviewMetric("Stale memories", String(staleMemories), "Not updated in 90 days", "stale", staleMemories === 0 ? "good" : "warn")}
     </div>
     <div class="wide-grid">
       <section class="stat-panel">
         <div class="panel-head"><h2>Retrieval Snapshot</h2><span class="muted">${snapshotScope}, ${contextMemoryCount} in preview</span></div>
         <div class="stat-body">
-          ${renderMeter("Avg memory confidence", averageConfidence, `${highConfidence} high confidence, ${lowConfidence} need review`, toneForRatio(averageConfidence, 0.75, 0.55))}
+          ${renderMeter("Avg memory confidence", averageConfidence, `${highConfidence} high confidence, ${lowConfidence} need review`, toneForRatio(averageConfidence, 0.9, 0.8))}
           ${renderMeter("Preview size", contextRatio, `${contextMemoryCount} memories, ${usedChars} of ${maxChars || "n/a"} characters`, toneForCeiling(contextRatio, 0.72, 0.9))}
           ${renderDistribution("Memory kinds", kindCounts.length ? kindCounts : countByField(memories, "kind"), "No active memories yet.")}
           <div class="muted">Evidence store: ${escapeHtml(evidenceTotal > 0 ? `${evidenceTotal} chunks, latest ${formatIsoCompact(lastEvidenceCreatedAt)}` : "empty, no linked source material")}</div>
         </div>
       </section>
       <section class="panel health-plane">${renderHealthPlane(health)}</section>
+      <section class="stat-panel full-span">
+        <div class="panel-head"><h2>Memory Review</h2><span class="muted">${reviewCounts.all} loaded, ${reviewCounts.archived} archived</span></div>
+        <div class="stat-body">
+          <div class="review-toolbar">
+            ${renderReviewFilterButton("All", "all", reviewCounts.all)}
+            ${renderReviewFilterButton("Needs review", "needs-review", reviewCounts.needsReview)}
+            ${renderReviewFilterButton("Stale", "stale", reviewCounts.stale)}
+            ${renderReviewFilterButton("Probably low confidence", "probably-low-confidence", reviewCounts.probablyLowConfidence)}
+            ${renderReviewFilterButton("Pinned", "pinned", reviewCounts.pinned)}
+            ${renderReviewFilterButton("Archived", "archived", reviewCounts.archived)}
+          </div>
+          <div id="reviewSummary" class="review-summary"></div>
+          <div class="memory-review-list">${renderMemoryReviewItems(memories, nowMs)}</div>
+        </div>
+      </section>
     </div>
   `;
+}
+
+function renderReviewMetric(
+  label: string,
+  value: string,
+  detail: string,
+  filter: string,
+  tone = "",
+): string {
+  const toneClass = tone ? ` ${tone}` : "";
+  return `
+    <button type="button" class="stat-tile${toneClass}" data-review-filter="${escapeHtml(filter)}" data-review-label="${escapeHtml(label)}">
+      <div class="k">${escapeHtml(label)}</div>
+      <strong>${escapeHtml(value)}</strong>
+      <span>${escapeHtml(detail)}</span>
+    </button>
+  `;
+}
+
+function renderReviewFilterButton(
+  label: string,
+  filter: string,
+  count: number,
+): string {
+  return `<button type="button" class="review-filter" data-review-filter="${escapeHtml(filter)}" data-review-label="${escapeHtml(label)}">${escapeHtml(label)} ${count}</button>`;
+}
+
+interface MemoryReviewCounts {
+  all: number;
+  needsReview: number;
+  stale: number;
+  probablyLowConfidence: number;
+  pinned: number;
+  archived: number;
+}
+
+function getMemoryReviewCounts(
+  memories: JsonResult[],
+  nowMs: number,
+): MemoryReviewCounts {
+  const counts: MemoryReviewCounts = {
+    all: memories.length,
+    needsReview: 0,
+    stale: 0,
+    probablyLowConfidence: 0,
+    pinned: 0,
+    archived: 0,
+  };
+
+  for (const memory of memories) {
+    const flags = getMemoryReviewFlags(memory, nowMs);
+    if (flags.includes("needs-review")) counts.needsReview += 1;
+    if (flags.includes("stale")) counts.stale += 1;
+    if (flags.includes("probably-low-confidence")) {
+      counts.probablyLowConfidence += 1;
+    }
+    if (flags.includes("pinned")) counts.pinned += 1;
+    if (flags.includes("archived")) counts.archived += 1;
+  }
+
+  return counts;
+}
+
+function renderMemoryReviewItems(
+  memories: JsonResult[],
+  nowMs: number,
+): string {
+  if (memories.length === 0) {
+    return `<div class="muted">No durable memories loaded in this dashboard sample.</div>`;
+  }
+
+  return memories
+    .map((memory) => renderMemoryReviewItem(memory, nowMs))
+    .join("");
+}
+
+function renderMemoryReviewItem(memory: JsonResult, nowMs: number): string {
+  const id = toNumber(memory.id);
+  const title = toText(memory.title) || "Untitled memory";
+  const body = toText(memory.body) || "";
+  const kind = toText(memory.kind) || "memory";
+  const project = toText(memory.project) || "global";
+  const confidence = toNumber(memory.confidence) ?? 0;
+  const createdAt = toText(memory.createdAt);
+  const updatedAt = toText(memory.updatedAt);
+  const tags = arrayOfTexts(memory.tags);
+  const sourceEventIds = arrayOfNumbers(memory.sourceEventIds);
+  const flags = getMemoryReviewFlags(memory, nowMs);
+  const badges = [
+    renderBadge(kind, ""),
+    renderBadge(formatConfidence(confidence), toneForMemoryConfidence(confidence)),
+    toBoolean(memory.pinned) ? renderBadge("pinned", "good") : "",
+    toBoolean(memory.archived) ? renderBadge("archived", "warn") : "",
+    flags.includes("stale") ? renderBadge("stale", "warn") : "",
+    flags.includes("probably-low-confidence")
+      ? renderBadge("probably low confidence", "bad")
+      : flags.includes("needs-review")
+        ? renderBadge("needs review", "warn")
+        : "",
+  ]
+    .filter(Boolean)
+    .join("");
+
+  return `
+    <article class="memory-review-item" data-review-filters="${escapeHtml(flags.join(" "))}">
+      <div class="memory-review-top">
+        <div class="memory-review-title">
+          <strong>${escapeHtml(id === undefined ? title : `#${id} ${title}`)}</strong>
+          <div class="memory-review-meta">
+            <span>${escapeHtml(project)}</span>
+            <span>Created ${escapeHtml(formatIsoCompact(createdAt))}</span>
+            <span>Updated ${escapeHtml(formatIsoCompact(updatedAt))}</span>
+            <span>${sourceEventIds.length} source event${sourceEventIds.length === 1 ? "" : "s"}</span>
+          </div>
+        </div>
+        <div class="memory-badges">${badges}</div>
+      </div>
+      ${tags.length ? `<div class="memory-review-meta">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div>` : ""}
+      <code class="text-block compact">${escapeHtml(body || "No body recorded.")}</code>
+    </article>
+  `;
+}
+
+function getMemoryReviewFlags(memory: JsonResult, nowMs: number): string[] {
+  const flags = ["all"];
+  const archived = toBoolean(memory.archived);
+  const confidence = toNumber(memory.confidence) ?? 0;
+
+  if (!archived && confidence < REVIEW_CONFIDENCE_THRESHOLD) {
+    flags.push("needs-review");
+  }
+  if (!archived && confidence < PROBABLY_LOW_CONFIDENCE_THRESHOLD) {
+    flags.push("probably-low-confidence");
+  }
+  if (!archived && isMemoryStale(memory, nowMs)) {
+    flags.push("stale");
+  }
+  if (toBoolean(memory.pinned)) {
+    flags.push("pinned");
+  }
+  if (archived) {
+    flags.push("archived");
+  }
+
+  return flags;
+}
+
+function isMemoryStale(memory: JsonResult, nowMs: number): boolean {
+  const updatedAt = toText(memory.updatedAt);
+  if (!updatedAt) {
+    return false;
+  }
+  const parsed = Date.parse(updatedAt);
+  if (!Number.isFinite(parsed)) {
+    return false;
+  }
+  return nowMs - parsed > STALE_MEMORY_REVIEW_DAYS * 24 * 60 * 60 * 1000;
+}
+
+function renderBadge(label: string, tone: string): string {
+  const toneClass = tone ? ` ${tone}` : "";
+  return `<span class="badge${toneClass}">${escapeHtml(label)}</span>`;
+}
+
+function toneForMemoryConfidence(confidence: number): string {
+  if (confidence >= REVIEW_CONFIDENCE_THRESHOLD) {
+    return "good";
+  }
+  if (confidence < PROBABLY_LOW_CONFIDENCE_THRESHOLD) {
+    return "bad";
+  }
+  return "warn";
+}
+
+function formatConfidence(confidence: number): string {
+  return `${Math.round(clampRatio(confidence) * 100)}% confidence`;
 }
 
 function renderOperationsPlane(
@@ -1939,8 +2203,8 @@ function renderInspector(
   if (!task) {
     return `
       <div class="muted">No task events yet.</div>
-      <div class="section"><h3>Required signal</h3><div class="reasoning">Emit agent_event with taskId, actor, summary, and payload.reasoningSummary or payload.rationale.</div></div>
-      <div class="section"><h3>Context</h3><div class="context">${escapeHtml(toText(contextPreview.text) || "No context yet.")}</div></div>
+      <div class="section"><h3>Required signal</h3><div class="reasoning text-block compact">Emit agent_event with taskId, actor, summary, and payload.reasoningSummary or payload.rationale.</div></div>
+      <div class="section"><h3>Context</h3><div class="context text-block">${escapeHtml(toText(contextPreview.text) || "No context yet.")}</div></div>
     `;
   }
 
@@ -2034,7 +2298,7 @@ function renderTaskInspector(
   return `
     <div>
       <div class="focus-title">${escapeHtml(toText(task.title) || taskId)}</div>
-      <div class="muted">${escapeHtml(toText(task.description) || "No task description recorded yet.")}</div>
+      <div class="focus-subtitle">${escapeHtml(toText(task.description) || "No task description recorded yet.")}</div>
     </div>
     <div class="kv">
       <div class="key">Agent</div><div>${escapeHtml(actor)} <span class="state state-${escapeHtml(toText(agent.status) || "idle")}">${escapeHtml(toText(agent.status) || "idle")}</span></div>
@@ -2045,9 +2309,9 @@ function renderTaskInspector(
       <div class="key">Status</div><div><span class="state state-${escapeHtml(toText(task.status) || "active")}">${escapeHtml(toText(task.status) || "active")}</span></div>
       <div class="key">Seen</div><div>${escapeHtml(formatIsoCompact(toText(task.lastSeenAt)))}</div>
     </div>
-    <div class="section"><h3>Reasoning Summary</h3><div class="reasoning">${escapeHtml(reasoning)}</div></div>
+    <div class="section"><h3>Reasoning Summary</h3><div class="reasoning text-block">${escapeHtml(reasoning)}</div></div>
     <div class="section"><h3>Task Activity</h3><ul>${renderActivityItems(matchingActivities)}</ul></div>
-    <div class="section"><h3>Context Preview</h3><div class="context">${escapeHtml(toText(contextPreview.text) || "No context yet.")}</div></div>
+    <div class="section"><h3>Context Preview</h3><div class="context text-block">${escapeHtml(toText(contextPreview.text) || "No context yet.")}</div></div>
   `;
 }
 
@@ -2071,7 +2335,7 @@ function renderAgentInspector(
   return `
     <div>
       <div class="focus-title">${escapeHtml(agentId)}</div>
-      <div class="muted">${escapeHtml(toText(agent.role) || "agent")} / ${escapeHtml(toText(agent.source) || "source unknown")}</div>
+      <div class="focus-subtitle">${escapeHtml(toText(agent.role) || "agent")} / ${escapeHtml(toText(agent.source) || "source unknown")}</div>
     </div>
     <div class="kv">
       <div class="key">Status</div><div><span class="state state-${escapeHtml(toText(agent.status) || "idle")}">${escapeHtml(toText(agent.status) || "idle")}</span></div>
@@ -2081,7 +2345,7 @@ function renderAgentInspector(
       <div class="key">Failed</div><div>${toNumber(agent.failedTasks) ?? 0}</div>
       <div class="key">Seen</div><div>${escapeHtml(formatIsoCompact(toText(agent.lastSeenAt)))}</div>
     </div>
-    <div class="section"><h3>Current Task Reasoning</h3><div class="reasoning">${escapeHtml(activeTask ? toText(activeTask.reasoning) || toText(activeTask.description) || "No explicit reasoning summary recorded." : "No active task.")}</div></div>
+    <div class="section"><h3>Current Task Reasoning</h3><div class="reasoning text-block">${escapeHtml(activeTask ? toText(activeTask.reasoning) || toText(activeTask.description) || "No explicit reasoning summary recorded." : "No active task.")}</div></div>
     <div class="section"><h3>Agent Activity</h3><ul>${renderActivityItems(agentActivities)}</ul></div>
   `;
 }
@@ -2104,7 +2368,7 @@ function renderMemoryPlane(
         .join("")
     : `<li class="muted">No durable memories yet.</li>`;
 
-  return `<div class="panel-head"><h2>Durable Memory</h2><span class="muted">Separate from live control plane</span></div><div class="inspector-body"><ul>${rows}</ul><div class="section"><h3>Current Context Pack</h3><div class="context">${escapeHtml(toText(contextPreview.text) || "No context yet.")}</div></div></div>`;
+  return `<div class="panel-head"><h2>Durable Memory</h2><span class="muted">Separate from live control plane</span></div><div class="inspector-body"><ul>${rows}</ul><div class="section"><h3>Current Context Pack</h3><div class="context text-block">${escapeHtml(toText(contextPreview.text) || "No context yet.")}</div></div></div>`;
 }
 
 function pickFocusTask(tasks: JsonResult[]): JsonResult | undefined {
@@ -2123,10 +2387,13 @@ function renderActivityItems(activities: JsonResult[]): string {
   return activities
     .map(
       (activity) => `
-        <li>
-          <strong>${escapeHtml(formatIsoCompact(toText(activity.createdAt)))} / ${escapeHtml(toText(activity.type) || "event")}</strong>
-          <span>${escapeHtml(toText(activity.summary) || "No summary")}</span>
-          <code>${escapeHtml(toText(activity.reasoning) || toText(activity.payloadPreview) || "No explicit reasoning or payload summary.")}</code>
+        <li class="activity-item">
+          <div class="activity-meta">
+            <strong>${escapeHtml(formatIsoCompact(toText(activity.createdAt)))}</strong>
+            <span class="state">${escapeHtml(toText(activity.type) || "event")}</span>
+          </div>
+          <div class="activity-summary">${escapeHtml(toText(activity.summary) || "No summary")}</div>
+          <code class="text-block compact">${escapeHtml(toText(activity.reasoning) || toText(activity.payloadPreview) || "No explicit reasoning or payload summary.")}</code>
         </li>`,
     )
     .join("");
@@ -2140,6 +2407,24 @@ function arrayOfRecords(value: unknown): JsonResult[] {
   return Array.isArray(value) ? value.map((item) => toRecord(item)) : [];
 }
 
+function arrayOfTexts(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => toText(item)?.trim() || "")
+    .filter(Boolean);
+}
+
+function arrayOfNumbers(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(
+    (item): item is number => typeof item === "number" && Number.isFinite(item),
+  );
+}
+
 interface AgentGraphRow {
   label: string;
   value: string;
@@ -2148,6 +2433,7 @@ interface AgentGraphRow {
 interface AgentGraphNode {
   id: string;
   type: "agent" | "subagent" | "task";
+  eyebrow: string;
   label: string;
   detail: string;
   rows: AgentGraphRow[];
@@ -2309,15 +2595,15 @@ function buildGraphNodes(
     .forEach(visitActor);
   [...actorIds].sort(compareActors).forEach(visitActor);
 
-  const leftX = 126;
-  const columnGap = 256;
-  const rowGap = 116;
-  const blockGap = 28;
-  const agentWidth = 220;
-  const agentHeight = 116;
-  const taskWidth = 248;
-  const taskHeight = 106;
-  let cursorY = 88;
+  const leftX = 116;
+  const columnGap = 286;
+  const rowGap = 108;
+  const blockGap = 24;
+  const agentWidth = 224;
+  const agentHeight = 92;
+  const taskWidth = 260;
+  const taskHeight = 92;
+  let cursorY = 72;
 
   for (const actor of orderedActors) {
     const ownedActiveTasks = activeTasksByActor.get(actor) || [];
@@ -2331,36 +2617,47 @@ function buildGraphNodes(
     const parentAgentId = parentAgentByActor.get(actor);
     const nodeType =
       depth > 0 || isSubagentRole(role) ? "subagent" : "agent";
+    const roleLabel = formatGraphRole(role);
     const activeCount = toNumber(agent.activeTasks) ?? ownedActiveTasks.length;
     const completedCount = toNumber(agent.completedTasks) ?? 0;
     const failedCount = toNumber(agent.failedTasks) ?? 0;
-    const lastSeenAt =
-      toText(agent.lastSeenAt) || latestByActor.get(actor) || "";
     const status =
       toText(agent.status) ||
       (ownedActiveTasks.length > 0 ? "active" : "idle");
     const detail =
-      ownedActiveTasks.length === 1
-        ? `running: ${getTaskTitle(ownedActiveTasks[0])}`
-        : `${activeCount} active tasks`;
-    const agentRows: AgentGraphRow[] = [
-      { label: "Role", value: role },
-      { label: "Source", value: toText(agent.source) || "task stream" },
-      { label: "Active", value: String(activeCount) },
-      { label: "Done", value: String(completedCount) },
-      { label: "Failed", value: String(failedCount) },
-      { label: "Seen", value: formatIsoCompact(lastSeenAt) },
-    ];
-    if (parentAgentId) {
-      agentRows.splice(2, 0, { label: "Parent", value: parentAgentId });
+      nodeType === "subagent"
+        ? parentAgentId
+          ? `Parent ${parentAgentId}`
+          : roleLabel
+        : ownedActiveTasks.length === 1
+          ? getTaskTitle(ownedActiveTasks[0])
+          : `${activeCount} active task${activeCount === 1 ? "" : "s"}`;
+    const agentRows: AgentGraphRow[] =
+      nodeType === "subagent"
+        ? [
+            { label: "Status", value: status },
+            { label: "Active", value: String(activeCount) },
+          ]
+        : [
+            { label: "Role", value: roleLabel },
+            { label: "Status", value: status },
+          ];
+    if (nodeType === "agent" && (failedCount > 0 || completedCount > 0)) {
+      agentRows[1] = {
+        label: "Load",
+        value: `${activeCount} active, ${completedCount} done${
+          failedCount > 0 ? `, ${failedCount} failed` : ""
+        }`,
+      };
     }
 
     nodes.push({
       id: `agent:${actor}`,
       type: nodeType,
+      eyebrow: nodeType === "subagent" ? "SUBAGENT" : "AGENT",
       label: actor,
       detail,
-      rows: agentRows.slice(0, 6),
+      rows: agentRows.slice(0, 2),
       status,
       x: actorX,
       y: actorY,
@@ -2371,19 +2668,15 @@ function buildGraphNodes(
 
     ownedActiveTasks.forEach((task, index) => {
       const taskId = toText(task.id) || `${actor}:${index}`;
-      const taskRole = toText(task.role) || role;
       nodes.push({
         id: `task:${taskId}`,
         type: "task",
+        eyebrow: "ACTIVE TASK",
         label: getTaskTitle(task),
-        detail: getTaskDetail(task),
+        detail: toText(task.status) || "active",
         rows: [
-          { label: "Agent", value: actor },
-          { label: "Role", value: taskRole },
-          { label: "Task", value: taskId },
-          { label: "Parent", value: toText(task.parentTaskId) || "root" },
+          { label: "Owner", value: actor },
           { label: "Project", value: toText(task.project) || "global" },
-          { label: "Status", value: toText(task.status) || "active" },
         ],
         status: toText(task.status) || "active",
         x: actorX + columnGap,
@@ -2414,8 +2707,8 @@ function renderAgentGraphSvg(
     Math.ceil(Math.max(...nodes.map((node) => node.x + node.width / 2)) + 24),
   );
   const viewBoxHeight = Math.max(
-    380,
-    Math.ceil(Math.max(...nodes.map((node) => node.y + node.height / 2)) + 32),
+    320,
+    Math.ceil(Math.max(...nodes.map((node) => node.y + node.height / 2)) + 24),
   );
   const renderConnection = (
     from: AgentGraphNode,
@@ -2492,6 +2785,12 @@ function renderAgentGraphSvg(
           : node.type === "subagent"
             ? "oklch(0.78 0.14 80)"
             : "oklch(0.7 0.12 235)";
+      const cardFill =
+        node.type === "agent"
+          ? "oklch(0.21 0.022 155)"
+          : node.type === "subagent"
+            ? "oklch(0.22 0.026 80)"
+            : "oklch(0.21 0.026 235)";
       const stroke =
         node.status === "failed"
           ? "oklch(0.68 0.16 35)"
@@ -2505,22 +2804,65 @@ function renderAgentGraphSvg(
       const top = node.y - node.height / 2;
       const titleX = left + 14;
       const valueX = left + 66;
-      const rowStart = top + (node.type === "task" ? 47 : 50);
-      const rowGap = node.type === "task" ? 11 : 12;
-      const titleLimit = node.type === "task" ? 27 : 24;
-      const detailLimit = node.type === "task" ? 38 : 34;
-      const valueLimit = node.type === "task" ? 31 : 27;
+      const rowStart = top + 63;
+      const rowGap = 12;
+      const titleLimit = node.type === "task" ? 34 : 28;
+      const detailLimit = node.type === "task" ? 42 : 34;
+      const valueLimit = node.type === "task" ? 34 : 28;
       const rows = node.rows
-        .slice(0, 6)
+        .slice(0, 2)
         .map(
           (row, index) =>
-            `<text x="${titleX}" y="${rowStart + index * rowGap}" fill="oklch(0.66 0.018 248)" font-size="8.2" font-weight="700">${escapeHtml(row.label)}</text><text x="${valueX}" y="${rowStart + index * rowGap}" fill="oklch(0.86 0.01 248)" font-size="8.2">${escapeHtml(clipLabel(row.value, valueLimit))}</text>`,
+            `<text x="${titleX}" y="${rowStart + index * rowGap}" fill="oklch(0.66 0.018 248)" font-size="8.5" font-weight="700">${escapeHtml(row.label)}</text><text x="${valueX}" y="${rowStart + index * rowGap}" fill="oklch(0.86 0.01 248)" font-size="8.5">${escapeHtml(clipLabel(row.value, valueLimit))}</text>`,
         )
         .join("");
-      return `<g class="map-node map-node-${escapeHtml(node.type)} status-${escapeHtml(statusClass)}" data-node-id="${escapeHtml(node.id)}"><title>${escapeHtml(`${node.label}: ${node.detail}`)}</title><rect class="map-node-card" x="${left}" y="${top}" width="${node.width}" height="${node.height}" rx="7" fill="oklch(0.23 0.02 248)" stroke="${stroke}" /><circle class="map-node-dot" cx="${titleX}" cy="${top + 17}" r="5.5" fill="${fill}" /><text x="${titleX + 13}" y="${top + 20}" fill="oklch(0.94 0.008 248)" font-size="12" font-weight="750">${escapeHtml(clipLabel(node.label, titleLimit))}</text><text x="${titleX}" y="${top + 36}" fill="oklch(0.72 0.018 248)" font-size="9">${escapeHtml(clipLabel(node.detail, detailLimit))}</text>${rows}</g>`;
+      const card = renderGraphNodeCard(
+        node.type,
+        left,
+        top,
+        node.width,
+        node.height,
+        cardFill,
+        stroke,
+      );
+      const marker = renderGraphNodeMarker(node.type, titleX, top + 33, fill);
+      return `<g class="map-node map-node-${escapeHtml(node.type)} status-${escapeHtml(statusClass)}" data-node-id="${escapeHtml(node.id)}"><title>${escapeHtml(`${node.eyebrow}: ${node.label}: ${node.detail}`)}</title>${card}<text x="${titleX}" y="${top + 16}" fill="${fill}" font-size="7.5" font-weight="800">${escapeHtml(node.eyebrow)}</text>${marker}<text x="${titleX + 15}" y="${top + 36}" fill="oklch(0.94 0.008 248)" font-size="12" font-weight="750">${escapeHtml(clipLabel(node.label, titleLimit))}</text><text x="${titleX}" y="${top + 51}" fill="oklch(0.72 0.018 248)" font-size="9">${escapeHtml(clipLabel(node.detail, detailLimit))}</text>${rows}</g>`;
     })
     .join("");
-  return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" style="min-width:${viewBoxWidth}px;" role="img" aria-label="Live active agent and task graph"><text x="18" y="26" fill="oklch(0.72 0.018 248)" font-size="11">left: agents / middle: spawned subagents / right: active tasks / animated lines show live ownership</text>${spawnLines}${taskLines}${persistedLines}${renderedNodes}</svg>`;
+  return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" style="min-width:${viewBoxWidth}px;" role="img" aria-label="Live active agent and task graph">${spawnLines}${taskLines}${persistedLines}${renderedNodes}</svg>`;
+}
+
+function renderGraphNodeCard(
+  type: AgentGraphNode["type"],
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+  fill: string,
+  stroke: string,
+): string {
+  if (type === "agent") {
+    return `<rect class="map-node-card" x="${left}" y="${top}" width="${width}" height="${height}" rx="8" fill="${fill}" stroke="${stroke}" />`;
+  }
+  if (type === "subagent") {
+    return `<rect class="map-node-card" x="${left}" y="${top}" width="${width}" height="${height}" rx="8" fill="${fill}" stroke="${stroke}" />`;
+  }
+  return `<rect class="map-node-card" x="${left}" y="${top}" width="${width}" height="${height}" rx="8" fill="${fill}" stroke="${stroke}" />`;
+}
+
+function renderGraphNodeMarker(
+  type: AgentGraphNode["type"],
+  x: number,
+  y: number,
+  fill: string,
+): string {
+  if (type === "agent") {
+    return `<circle class="map-node-dot" cx="${x}" cy="${y}" r="5.5" fill="${fill}" />`;
+  }
+  if (type === "subagent") {
+    return `<rect class="map-node-dot" x="${x - 5}" y="${y - 5}" width="10" height="10" transform="rotate(45 ${x} ${y})" rx="1.2" fill="${fill}" />`;
+  }
+  return `<rect class="map-node-dot" x="${x - 5.5}" y="${y - 4.8}" width="11" height="9.6" rx="2.2" fill="${fill}" /><path d="M ${x - 2.8} ${y} L ${x - 0.6} ${y + 2.2} L ${x + 3.6} ${y - 2.7}" stroke="oklch(0.16 0.014 246)" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" />`;
 }
 
 function getTaskActor(task: JsonResult): string {
@@ -2528,27 +2870,48 @@ function getTaskActor(task: JsonResult): string {
 }
 
 function getTaskTitle(task: JsonResult): string {
-  return (
+  const title =
     toText(task.title) ||
     toText(task.summary) ||
     toText(task.id) ||
-    "active task"
-  );
-}
-
-function getTaskDetail(task: JsonResult): string {
-  return (
-    toText(task.reasoning) ||
-    toText(task.description) ||
-    toText(task.latestEventType) ||
-    toText(task.id) ||
-    "No task detail recorded."
-  );
+    "active task";
+  if (!isNoisyTaskLabel(title)) {
+    return title;
+  }
+  const actor = getTaskActor(task);
+  const role = toText(task.role);
+  if (isSubagentRole(role)) {
+    return `${actor} turn`;
+  }
+  return toText(task.status) === "active" ? "Current Codex turn" : "Codex turn";
 }
 
 function isSubagentRole(role: string | undefined): boolean {
   const normalized = role?.toLowerCase() || "";
   return normalized.includes("subagent") || normalized.includes("sub-agent");
+}
+
+function formatGraphRole(role: string | undefined): string {
+  const normalized = (role || "agent").replace(/^subagent:?/i, "").trim();
+  return normalized || "agent";
+}
+
+function isNoisyTaskLabel(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return true;
+  }
+  const normalized = trimmed.toLowerCase();
+  return (
+    trimmed.startsWith("{") ||
+    trimmed.startsWith("[") ||
+    normalized.includes("chunk id:") ||
+    normalized.includes("original token count") ||
+    normalized.startsWith("codex task_started") ||
+    normalized.startsWith("codex reasoning") ||
+    normalized.startsWith("codex tool_call") ||
+    normalized.startsWith("codex function_call_output")
+  );
 }
 
 function clipLabel(value: string, maxLength: number): string {

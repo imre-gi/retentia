@@ -189,6 +189,7 @@ export class V2MemoryEngine {
       .get(cleanExternalKey) as EventImportRow | undefined;
 
     if (existing) {
+      this.updateEvent(existing.event_id, input);
       return {
         event: this.getEvent(existing.event_id),
         imported: false,
@@ -210,6 +211,52 @@ export class V2MemoryEngine {
       );
 
     return { event, imported: true, externalKey: cleanExternalKey };
+  }
+
+  private updateEvent(eventId: number, input: V2EventInput): void {
+    const current = this.getEvent(eventId);
+    const payload =
+      input.payload === undefined ? current.payload : input.payload;
+
+    this.db
+      .prepare(
+        `UPDATE events
+         SET created_at = ?, type = ?, source = ?, actor = ?, role = ?,
+             task_id = ?, parent_task_id = ?, project = ?, summary = ?,
+             tags_json = ?, artifacts_json = ?, payload_json = ?
+         WHERE id = ?`,
+      )
+      .run(
+        input.createdAt || current.createdAt,
+        cleanRequired(input.type, current.type || "event"),
+        cleanRequired(input.source, current.source || "manual"),
+        input.actor === undefined
+          ? cleanOptional(current.actor)
+          : cleanOptional(input.actor),
+        input.role === undefined
+          ? cleanOptional(current.role)
+          : cleanOptional(input.role),
+        input.taskId === undefined
+          ? cleanOptional(current.taskId)
+          : cleanOptional(input.taskId),
+        input.parentTaskId === undefined
+          ? cleanOptional(current.parentTaskId)
+          : cleanOptional(input.parentTaskId),
+        input.project === undefined
+          ? cleanOptional(current.project)
+          : cleanOptional(input.project),
+        input.summary === undefined
+          ? cleanOptional(current.summary)
+          : cleanOptional(input.summary),
+        toJson(input.tags === undefined ? current.tags : cleanList(input.tags)),
+        toJson(
+          input.artifacts === undefined
+            ? current.artifacts
+            : cleanList(input.artifacts),
+        ),
+        payload === undefined ? null : toJson(payload),
+        eventId,
+      );
   }
 
   hasImportedEvent(externalKey: string): boolean {
@@ -686,13 +733,15 @@ export class V2MemoryEngine {
   buildDashboard(limit = 80): V2DashboardData {
     const recentEvents = this.listEvents(limit);
     const trendEvents = this.listEvents(Math.max(limit, 500));
-    const memories = this.listMemories(limit);
+    const memories = this.listMemories(limit, true);
     const edges = this.listEdges(limit * 2);
     const tasks = buildTasks(recentEvents);
     const trends = buildExecutionTrends(trendEvents);
     const agents = buildAgents(recentEvents, tasks);
     const activities = buildActivities(recentEvents);
-    const quality = this.buildDashboardQuality(memories.length);
+    const quality = this.buildDashboardQuality(
+      memories.filter((memory) => !memory.archived).length,
+    );
     const projects = new Set([
       ...recentEvents.map((event) => event.project).filter(Boolean),
       ...memories.map((memory) => memory.project).filter(Boolean),
@@ -734,8 +783,8 @@ export class V2MemoryEngine {
         `SELECT
            COUNT(*) AS activeMemoryTotal,
            AVG(confidence) AS averageConfidence,
-           SUM(CASE WHEN confidence >= 0.8 THEN 1 ELSE 0 END) AS highConfidence,
-           SUM(CASE WHEN confidence < 0.6 THEN 1 ELSE 0 END) AS lowConfidence,
+           SUM(CASE WHEN confidence >= 0.9 THEN 1 ELSE 0 END) AS highConfidence,
+           SUM(CASE WHEN confidence < 0.9 THEN 1 ELSE 0 END) AS lowConfidence,
            SUM(CASE WHEN pinned = 1 THEN 1 ELSE 0 END) AS pinnedTotal,
            SUM(CASE WHEN updated_at < ? THEN 1 ELSE 0 END) AS staleMemories,
            MAX(updated_at) AS lastMemoryUpdatedAt
@@ -1174,7 +1223,14 @@ function buildAgents(
     if (task.lastSeenAt > current.lastSeenAt) {
       current.lastSeenAt = task.lastSeenAt;
     }
-    current.status = current.activeTasks > 0 ? "active" : "idle";
+    current.status =
+      current.activeTasks > 0
+        ? "active"
+        : current.failedTasks > 0
+          ? "failed"
+          : current.completedTasks > 0
+            ? "completed"
+            : "idle";
     agents.set(id, current);
   }
 
@@ -1244,12 +1300,9 @@ function buildTasks(events: V2Event[]): V2DashboardTask[] {
       event.createdAt > current.lastSeenAt
         ? event.createdAt
         : current.lastSeenAt;
-    if (event.type === "task_completed") {
-      current.status = "completed";
-    } else if (event.type === "task_failed") {
-      current.status = "failed";
-    } else if (event.type === "task_started") {
-      current.status = "active";
+    const lifecycleStatus = getTaskLifecycleStatus(event.type);
+    if (lifecycleStatus) {
+      current.status = lifecycleStatus;
     }
     tasks.set(event.taskId, current);
   }
@@ -1266,6 +1319,28 @@ function buildExecutionTrends(events: V2Event[]): V2DashboardTrends {
   };
 }
 
+function getTaskLifecycleStatus(
+  eventType: string,
+): "active" | "completed" | "failed" | undefined {
+  const normalized = eventType.trim().toLowerCase().replace(/[-.\s]+/g, "_");
+  const match =
+    /^(task|agent|subagent)_(start|started|running|complete|completed|done|fail|failed|error)$/.exec(
+      normalized,
+    );
+  if (!match) {
+    return undefined;
+  }
+
+  const phase = match[2];
+  if (phase === "start" || phase === "started" || phase === "running") {
+    return "active";
+  }
+  if (phase === "complete" || phase === "completed" || phase === "done") {
+    return "completed";
+  }
+  return "failed";
+}
+
 function buildExecutionTrendTasks(events: V2Event[]): ExecutionTrendTask[] {
   const tasks = new Map<string, ExecutionTrendTask>();
   const orderedEvents = [...events].sort((left, right) => {
@@ -1274,7 +1349,8 @@ function buildExecutionTrendTasks(events: V2Event[]): ExecutionTrendTask[] {
   });
 
   for (const event of orderedEvents) {
-    if (!event.taskId || !event.type.startsWith("task_")) {
+    const lifecycleStatus = getTaskLifecycleStatus(event.type);
+    if (!event.taskId || !lifecycleStatus) {
       continue;
     }
 
@@ -1286,13 +1362,7 @@ function buildExecutionTrendTasks(events: V2Event[]): ExecutionTrendTask[] {
       event.createdAt > current.lastSeenAt
         ? event.createdAt
         : current.lastSeenAt;
-    if (event.type === "task_completed") {
-      current.status = "completed";
-    } else if (event.type === "task_failed") {
-      current.status = "failed";
-    } else if (event.type === "task_started") {
-      current.status = "active";
-    }
+    current.status = lifecycleStatus;
     tasks.set(event.taskId, current);
   }
 

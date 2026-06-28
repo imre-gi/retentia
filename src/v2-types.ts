@@ -1,5 +1,11 @@
 export type V2EventType =
   | "message"
+  | "agent_started"
+  | "agent_completed"
+  | "agent_failed"
+  | "subagent_started"
+  | "subagent_completed"
+  | "subagent_failed"
   | "task_started"
   | "task_completed"
   | "task_failed"

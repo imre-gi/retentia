@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { basename, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { getV2DataFilePath } from "./v2-config.js";
 import { V2MemoryEngine } from "./v2-engine.js";
@@ -459,15 +461,25 @@ function installV2Mcp(
     };
   }
 
-  const runner = resolveCodexRunner();
-  const listResult = runCodexCommand(runner, ["mcp", "list", "--json"]);
-  const configured = parseCodexMcpList(listResult.stdout).find(
-    (item) => item.name === name,
-  );
-  if (configured) {
-    runCodexCommand(runner, ["mcp", "remove", name]);
+  let runnerLabel = "";
+  let codexCliWarning = "";
+  let codexCliInstalled = false;
+  try {
+    const runner = resolveCodexRunner();
+    runnerLabel = runner.label;
+    const listResult = runCodexCommand(runner, ["mcp", "list", "--json"]);
+    const configured = parseCodexMcpList(listResult.stdout).find(
+      (item) => item.name === name,
+    );
+    if (configured) {
+      runCodexCommand(runner, ["mcp", "remove", name]);
+    }
+    runCodexCommand(runner, addArgs);
+    codexCliInstalled = true;
+  } catch (error) {
+    codexCliWarning = error instanceof Error ? error.message : String(error);
   }
-  runCodexCommand(runner, addArgs);
+  const codexConfig = writeCodexMcpConfigToml(name, scriptPath, dataFile);
 
   return {
     ok: true,
@@ -476,8 +488,12 @@ function installV2Mcp(
     client,
     name,
     dataFile,
-    using: runner.label,
-    command: [runner.command, ...runner.prefixArgs, ...addArgs].join(" "),
+    using: runnerLabel || "config.toml",
+    command: commandPreview,
+    codexCliInstalled,
+    codexCliWarning: codexCliWarning || undefined,
+    configPath: codexConfig.path,
+    configChanged: codexConfig.changed,
   };
 }
 
@@ -510,6 +526,73 @@ function buildV2McpConfig(
       },
     },
   };
+}
+
+function writeCodexMcpConfigToml(
+  name: string,
+  scriptPath: string,
+  dataFile: string,
+): { path: string; changed: boolean } {
+  const configPath =
+    process.env.RETENTIA_CODEX_CONFIG ||
+    join(homedir(), ".codex", "config.toml");
+  const header = `[mcp_servers.${formatTomlKey(name)}]`;
+  const body = [
+    `command = "node"`,
+    `args = ${formatTomlStringArray([scriptPath, "mcp", "--data-file", dataFile])}`,
+  ];
+
+  mkdirSync(dirname(configPath), { recursive: true });
+  const current = existsSync(configPath)
+    ? readFileSync(configPath, "utf8")
+    : "";
+  const next = upsertTomlSection(current, header, body);
+  if (next !== current) {
+    writeFileSync(configPath, next, "utf8");
+  }
+
+  return { path: configPath, changed: next !== current };
+}
+
+function upsertTomlSection(
+  current: string,
+  header: string,
+  body: string[],
+): string {
+  const output: string[] = [];
+  let skip = false;
+
+  for (const line of current.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === header) {
+      skip = true;
+      continue;
+    }
+    if (skip && /^\[.+\]$/.test(trimmed)) {
+      skip = false;
+    }
+    if (!skip) {
+      output.push(line);
+    }
+  }
+
+  const prefix = output.join("\n").trimEnd();
+  const section = [header, ...body].join("\n");
+  return `${prefix}${prefix ? "\n\n" : ""}${section}\n`;
+}
+
+function formatTomlKey(value: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(value)
+    ? value
+    : `"${escapeTomlString(value)}"`;
+}
+
+function formatTomlStringArray(values: string[]): string {
+  return `[${values.map((value) => `"${escapeTomlString(value)}"`).join(", ")}]`;
+}
+
+function escapeTomlString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function getSupportedClient(

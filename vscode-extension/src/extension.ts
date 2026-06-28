@@ -6,7 +6,7 @@ import {
   readdirSync,
   statSync,
 } from "node:fs";
-import { join, isAbsolute } from "node:path";
+import { basename, dirname, join, isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import * as vscode from "vscode";
@@ -55,6 +55,7 @@ const DEFAULT_AUTO_SYNC_LOOKBACK_DAYS = 7;
 const DEFAULT_AUTO_SYNC_MAX_IMPORT = 25;
 const DEFAULT_AUTO_SYNC_MAX_FILES = 24;
 const DEFAULT_DASHBOARD_LIMIT = 600;
+const REPOSITORY_NAME_CACHE = new Map<string, string>();
 const REVIEW_CONFIDENCE_THRESHOLD = 0.9;
 const PROBABLY_LOW_CONFIDENCE_THRESHOLD = 0.6;
 const STALE_MEMORY_REVIEW_DAYS = 90;
@@ -183,6 +184,20 @@ export function activate(context: vscode.ExtensionContext): void {
             if (cmd === "doctor") {
               await vscode.commands.executeCommand("retentia.doctor");
               await renderDashboardPanel(dashboardPanel);
+              return;
+            }
+
+            if (cmd === "memory-review-update") {
+              await updateMemoryReviewFromDashboard(message);
+              await renderDashboardPanel(dashboardPanel);
+              return;
+            }
+
+            if (cmd === "memory-delete") {
+              const deleted = await deleteMemoryFromDashboard(message);
+              if (deleted) {
+                await renderDashboardPanel(dashboardPanel);
+              }
               return;
             }
           },
@@ -605,7 +620,8 @@ function getDefaultProject(): string | undefined {
     return explicit;
   }
 
-  return vscode.workspace.workspaceFolders?.[0]?.name;
+  const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  return workspacePath ? resolveRepositoryName(workspacePath) : undefined;
 }
 
 function buildObservationArgs(input: {
@@ -903,6 +919,89 @@ async function collectAgentDashboardData(): Promise<JsonResult> {
   );
   const health = toRecord(await runCliJson(["doctor"]));
   return { ...dashboard, health };
+}
+
+async function updateMemoryReviewFromDashboard(message: unknown): Promise<void> {
+  const input = toRecord(message);
+  const id = toNumber(input.id);
+  const confidencePercent = toNumber(input.confidencePercent);
+  const comment = (toText(input.comment) || "").trim();
+  if (id === undefined || !Number.isInteger(id) || id <= 0) {
+    vscode.window.showErrorMessage("Retentia memory update failed: invalid memory id.");
+    return;
+  }
+  if (
+    confidencePercent === undefined ||
+    confidencePercent < 0 ||
+    confidencePercent > 100
+  ) {
+    vscode.window.showErrorMessage(
+      "Retentia memory update failed: confidence must be 0-100.",
+    );
+    return;
+  }
+  if (!comment) {
+    vscode.window.showWarningMessage(
+      "Add a review comment before changing memory confidence.",
+    );
+    return;
+  }
+
+  const current = toRecord(await runCliJson(["memory-get", "--id", String(id)]));
+  const confidence = Math.round(confidencePercent) / 100;
+  const body = appendMemoryReviewNote(
+    toText(current.body) || "",
+    confidencePercent,
+    comment,
+  );
+  await runCliJson([
+    "memory-update",
+    "--id",
+    String(id),
+    "--confidence",
+    String(confidence),
+    "--body",
+    body,
+  ]);
+  vscode.window.showInformationMessage(`Updated memory #${id}.`);
+}
+
+async function deleteMemoryFromDashboard(message: unknown): Promise<boolean> {
+  const input = toRecord(message);
+  const id = toNumber(input.id);
+  const title = toText(input.title) || `memory #${id}`;
+  if (id === undefined || !Number.isInteger(id) || id <= 0) {
+    vscode.window.showErrorMessage("Retentia memory delete failed: invalid memory id.");
+    return false;
+  }
+
+  const confirmed = await vscode.window.showWarningMessage(
+    `Delete ${title}? This removes the durable memory and memory-scoped evidence.`,
+    { modal: true },
+    "Delete",
+  );
+  if (confirmed !== "Delete") {
+    return false;
+  }
+
+  await runCliJson(["memory-delete", "--id", String(id), "--yes"]);
+  vscode.window.showInformationMessage(`Deleted memory #${id}.`);
+  return true;
+}
+
+function appendMemoryReviewNote(
+  currentBody: string,
+  confidencePercent: number,
+  comment: string,
+): string {
+  const normalizedBody = currentBody.trimEnd();
+  const timestamp = new Date().toISOString();
+  const note = [
+    `Review note (${timestamp})`,
+    `Confidence set to ${Math.round(confidencePercent)}%.`,
+    `Comment: ${comment}`,
+  ].join("\n");
+  return normalizedBody ? `${normalizedBody}\n\n${note}` : note;
 }
 
 function createEmptyAgentDashboardData(error?: string): JsonResult {
@@ -1210,7 +1309,7 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       * { box-sizing: border-box; }
       html, body { width: 100%; height: 100%; min-height: 100%; }
       body { margin: 0; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); }
-      .shell { width: 100%; height: 100vh; min-height: 0; padding: 14px; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 10px; overflow: hidden; }
+      .shell { width: 100%; height: 100vh; min-height: 0; padding: 14px; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 10px; overflow: hidden; }
       .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid var(--line-soft); background: var(--bg-2); border-radius: 8px; padding: 10px 12px; }
       h1 { margin: 0; font-size: 18px; font-weight: 720; letter-spacing: 0; }
       .sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
@@ -1223,11 +1322,7 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .live { display: inline-flex; align-items: center; gap: 7px; color: var(--green); font-size: 12px; min-height: 30px; }
       .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--green); box-shadow: 0 0 0 5px color-mix(in oklch, var(--green), transparent 84%); }
       #dashboardError:empty { display: none; }
-      .metrics { display: grid; grid-template-columns: repeat(7, minmax(92px, 1fr)); grid-auto-rows: 56px; gap: 8px; align-self: start; }
-      .metric, .panel, .map-panel, .inspector { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; }
-      .metric { padding: 8px 10px; min-width: 0; height: 56px; display: grid; align-content: start; overflow: hidden; }
-      .k { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
-      .v { font-size: 18px; font-weight: 760; margin-top: 3px; }
+      .panel, .map-panel, .inspector { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; }
       .insight-plane { min-height: 0; overflow: auto; display: grid; gap: 10px; }
       .insight-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 76px; gap: 10px; }
       .wide-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 10px; }
@@ -1322,15 +1417,37 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .memory-review-title { min-width: 0; display: grid; gap: 3px; }
       .memory-review-title strong { overflow-wrap: anywhere; }
       .memory-review-meta, .memory-badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--muted); font-size: 11px; }
+      .memory-review-actions { display: grid; grid-template-columns: minmax(112px, 140px) minmax(0, 1fr) auto auto; gap: 8px; align-items: end; }
+      .memory-review-actions label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; }
+      .memory-review-actions input, .memory-review-actions textarea { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 7px; background: oklch(0.17 0.014 246); color: var(--text); font: inherit; font-size: 12px; padding: 7px 8px; }
+      .memory-review-actions textarea { min-height: 32px; max-height: 96px; resize: vertical; }
+      .memory-review-actions input:focus-visible, .memory-review-actions textarea:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+      .danger-button { border-color: color-mix(in oklch, var(--red), transparent 35%); color: var(--red); }
+      .danger-button:hover { border-color: var(--red); background: color-mix(in oklch, var(--red), transparent 88%); }
       .badge { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px; color: var(--muted); }
       .badge.good { color: var(--green); border-color: color-mix(in oklch, var(--green), transparent 45%); }
       .badge.warn { color: var(--amber); border-color: color-mix(in oklch, var(--amber), transparent 45%); }
       .badge.bad { color: var(--red); border-color: color-mix(in oklch, var(--red), transparent 45%); }
+      .overview-plane { min-height: 0; overflow: auto; padding: 12px; display: grid; align-content: start; gap: 14px; }
+      .overview-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+      .overview-head h2 { margin: 0; font-size: 14px; }
+      .overview-kpi-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); grid-auto-rows: minmax(132px, auto); gap: 12px; }
+      .kpi-card { min-width: 0; min-height: 132px; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 14px; display: grid; grid-template-rows: auto 1fr auto; gap: 12px; overflow: hidden; }
+      .kpi-card.primary { grid-column: span 2; min-height: 160px; background: oklch(0.225 0.02 248); }
+      .kpi-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .kpi-label { min-width: 0; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .kpi-marker { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 999px; background: var(--muted); box-shadow: 0 0 0 5px color-mix(in oklch, var(--muted), transparent 88%); }
+      .kpi-marker.accent { background: var(--blue); box-shadow: 0 0 0 5px color-mix(in oklch, var(--blue), transparent 86%); }
+      .kpi-marker.good { background: var(--green); box-shadow: 0 0 0 5px color-mix(in oklch, var(--green), transparent 86%); }
+      .kpi-marker.warn { background: var(--amber); box-shadow: 0 0 0 5px color-mix(in oklch, var(--amber), transparent 86%); }
+      .kpi-value { align-self: end; min-width: 0; font-size: 34px; line-height: 1; font-weight: 760; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .kpi-card.primary .kpi-value { font-size: 44px; }
+      .kpi-detail { color: var(--muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
       .memory-plane { min-height: 0; overflow: auto; padding: 12px; }
       .hidden { display: none; }
       .error { border: 1px solid var(--red); color: var(--red); padding: 10px; border-radius: 8px; margin-bottom: 12px; }
-      @media (max-width: 1120px) { .metrics { grid-template-columns: repeat(4, minmax(110px, 1fr)); } .insight-grid, .wide-grid { grid-template-columns: 1fr; } }
-      @media (max-width: 980px) { .metrics, .trend-grid, .workbench { grid-template-columns: 1fr; } .workbench { grid-template-rows: minmax(0, 1fr) minmax(0, .8fr); } .top { align-items: flex-start; flex-direction: column; } .actions { justify-content: flex-start; } .graph svg { min-width: 680px; min-height: 480px; } .health-list { grid-template-columns: 1fr; } }
+      @media (max-width: 1120px) { .overview-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .insight-grid, .wide-grid, .memory-review-actions { grid-template-columns: 1fr; } }
+      @media (max-width: 980px) { .overview-kpi-grid, .trend-grid, .workbench { grid-template-columns: 1fr; } .kpi-card.primary { grid-column: auto; } .workbench { grid-template-rows: minmax(0, 1fr) minmax(0, .8fr); } .top { align-items: flex-start; flex-direction: column; } .actions { justify-content: flex-start; } .graph svg { min-width: 680px; min-height: 480px; } .health-list { grid-template-columns: 1fr; } }
       @media (prefers-reduced-motion: reduce) { .map-edge-active { animation: none; } }
     </style>
   </head>
@@ -1338,11 +1455,11 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
     <main class="shell">
       <div class="top">
         <div><h1>Retentia Control Plane</h1><div id="dashboardSubtitle" class="sub">${loading ? "Waiting for Retentia stream" : "Retentia stream"}</div></div>
-        <div class="actions"><button class="tab active" data-view="control">Control</button><button class="tab" data-view="memory">Memory</button><button class="tab" data-view="quality">Retrieval</button><button class="tab" data-view="operations">Operations</button><span id="streamState" class="live"><span class="dot"></span>Connecting</span></div>
+        <div class="actions"><button class="tab active" data-view="overview">Overview</button><button class="tab" data-view="control">Control</button><button class="tab" data-view="memory">Memory</button><button class="tab" data-view="quality">Retrieval</button><button class="tab" data-view="operations">Operations</button><span id="streamState" class="live"><span class="dot"></span>Connecting</span></div>
       </div>
       <div id="dashboardError"></div>
-      <section id="metricStrip" class="metrics"></section>
-      <section id="controlPlane" class="workbench">
+      <section id="overviewPlane" class="overview-plane"><div class="overview-head"><h2>Overview</h2><span class="muted">Live Retentia totals</span></div><div id="metricStrip" class="overview-kpi-grid"></div></section>
+      <section id="controlPlane" class="workbench hidden">
         <div class="map-panel"><div class="panel-head"><h2>Agent Task Map</h2><span class="muted">Select latest active task in inspector</span></div><div id="graph" class="graph"></div></div>
         <aside class="inspector"><div class="panel-head"><h2>Inspector</h2><span id="updatedAt" class="muted">n/a</span></div><div id="inspectorBody" class="inspector-body"></div></aside>
       </section>
@@ -1354,7 +1471,7 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       const vscode = acquireVsCodeApi();
       let pending = false;
       let lastSignature = "";
-      let currentView = "control";
+      let currentView = "overview";
       let selectedNodeId = "";
       let currentReviewFilter = "needs-review";
       let detailsByNode = {};
@@ -1382,8 +1499,9 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       }
 
       function setView(view) {
-        const allowed = new Set(["control", "memory", "quality", "operations"]);
-        currentView = allowed.has(view) ? view : "control";
+        const allowed = new Set(["overview", "control", "memory", "quality", "operations"]);
+        currentView = allowed.has(view) ? view : "overview";
+        document.getElementById("overviewPlane").classList.toggle("hidden", currentView !== "overview");
         document.getElementById("controlPlane").classList.toggle("hidden", currentView !== "control");
         document.getElementById("memoryPlane").classList.toggle("hidden", currentView !== "memory");
         document.getElementById("qualityPlane").classList.toggle("hidden", currentView !== "quality");
@@ -1391,7 +1509,7 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
         for (const button of document.querySelectorAll("button[data-view]")) {
           button.classList.toggle("active", button.getAttribute("data-view") === currentView);
         }
-        if (currentView === "quality") applyReviewFilter();
+        if (currentView === "memory") applyReviewFilter();
       }
 
       function applyReviewFilter() {
@@ -1439,10 +1557,33 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
 
       document.addEventListener("click", (event) => {
         const target = event.target;
-        const button = target && target.closest ? target.closest("button[data-review-filter]") : null;
-        if (!button) return;
-        setView("quality");
-        setReviewFilter(button.getAttribute("data-review-filter") || "all");
+        const reviewFilterButton = target && target.closest ? target.closest("button[data-review-filter]") : null;
+        if (reviewFilterButton) {
+          setView("memory");
+          setReviewFilter(reviewFilterButton.getAttribute("data-review-filter") || "all");
+          return;
+        }
+
+        const deleteButton = target && target.closest ? target.closest("button[data-memory-delete]") : null;
+        if (!deleteButton) return;
+        vscode.postMessage({
+          command: "memory-delete",
+          id: Number(deleteButton.getAttribute("data-memory-delete") || "0"),
+          title: deleteButton.getAttribute("data-memory-title") || ""
+        });
+      });
+
+      document.addEventListener("submit", (event) => {
+        const form = event.target;
+        if (!form || !form.matches || !form.matches("form[data-memory-review-form]")) return;
+        event.preventDefault();
+        const data = new FormData(form);
+        vscode.postMessage({
+          command: "memory-review-update",
+          id: Number(form.getAttribute("data-memory-id") || "0"),
+          confidencePercent: Number(data.get("confidencePercent") || "0"),
+          comment: String(data.get("comment") || "")
+        });
       });
 
       window.addEventListener("message", (event) => {
@@ -1484,8 +1625,17 @@ function buildAgentDashboardPayload(
 ): JsonResult {
   const totals = toRecord(data.totals);
   const agents = arrayOfRecords(data.agents);
-  const tasks = arrayOfRecords(data.tasks);
-  const activities = arrayOfRecords(data.activities);
+  const recentEvents = arrayOfRecords(data.recentEvents);
+  const repositoryByTaskId = buildRepositoryByTaskId(recentEvents);
+  const tasks = arrayOfRecords(data.tasks).map((task) =>
+    withRepositoryLabel(task, repositoryByTaskId.get(toText(task.id) || "")),
+  );
+  const activities = arrayOfRecords(data.activities).map((activity) =>
+    withRepositoryLabel(
+      activity,
+      repositoryByTaskId.get(toText(activity.taskId) || ""),
+    ),
+  );
   const memories = arrayOfRecords(data.memories);
   const edges = arrayOfRecords(data.edges);
   const trends = toRecord(data.trends);
@@ -1512,13 +1662,45 @@ function buildAgentDashboardPayload(
     updatedAt: formatIsoCompact(generatedAt),
     errorHtml: error ? `<div class="error">${escapeHtml(error)}</div>` : "",
     metricsHtml: [
-      metric("Events", toNumber(totals.events) ?? 0),
-      metric("Agents", toNumber(totals.agents) ?? agents.length),
-      metric("Active", activeTasks.length),
-      metric("Tasks", toNumber(totals.tasks) ?? tasks.length),
-      metric("Memories", toNumber(totals.memories) ?? memories.length),
-      metric("Relations", edges.length),
-      metric("Evidence", toNumber(totals.evidenceChunks) ?? 0),
+      metric(
+        "Events",
+        toNumber(totals.events) ?? 0,
+        "Signals currently available in the Retentia event stream.",
+        "accent",
+        "primary",
+      ),
+      metric(
+        "Agents",
+        toNumber(totals.agents) ?? agents.length,
+        "Agents seen in the current dashboard snapshot.",
+        "accent",
+      ),
+      metric(
+        "Active",
+        activeTasks.length,
+        "Tasks currently marked active in the control plane.",
+        activeTasks.length > 0 ? "good" : "default",
+      ),
+      metric(
+        "Tasks",
+        toNumber(totals.tasks) ?? tasks.length,
+        "Task records loaded into this dashboard window.",
+      ),
+      metric(
+        "Memories",
+        toNumber(totals.memories) ?? memories.length,
+        "Durable memories available for review and retrieval.",
+      ),
+      metric(
+        "Relations",
+        edges.length,
+        "Graph edges linking agents, tasks, memory, and evidence.",
+      ),
+      metric(
+        "Evidence",
+        toNumber(totals.evidenceChunks) ?? 0,
+        "Evidence chunks indexed for context and retrieval work.",
+      ),
     ].join(""),
     graphHtml: renderAgentGraphSvg(graphNodes, edges),
     inspectorHtml: renderInspector(tasks, agents, activities, contextPreview),
@@ -1540,6 +1722,119 @@ function buildAgentDashboardPayload(
     detailsByNode: buildNodeDetails(tasks, agents, activities, contextPreview),
     defaultNodeId: focusTask ? `task:${toText(focusTask.id)}` : "",
   };
+}
+
+function buildRepositoryByTaskId(events: JsonResult[]): Map<string, string> {
+  const repositories = new Map<string, string>();
+  for (const event of events) {
+    const taskId = toText(event.taskId);
+    if (!taskId || repositories.has(taskId)) {
+      continue;
+    }
+    const workspacePath = extractWorkspacePathFromEvent(event);
+    if (!workspacePath) {
+      continue;
+    }
+    repositories.set(taskId, resolveRepositoryName(workspacePath));
+  }
+  return repositories;
+}
+
+function withRepositoryLabel(
+  record: JsonResult,
+  repository?: string,
+): JsonResult {
+  const fallback = toText(record.project) || "global";
+  return {
+    ...record,
+    repository: repository || fallback,
+  };
+}
+
+function extractWorkspacePathFromEvent(event: JsonResult): string | undefined {
+  const payload = toRecord(event.payload);
+  const metadata = toRecord(payload.metadata);
+  const session = toRecord(payload.session);
+  const turn = toRecord(payload.turn);
+  return (
+    toText(payload.cwd) ||
+    toText(payload.projectPath) ||
+    toText(payload.project_path) ||
+    toText(payload.workspaceFolder) ||
+    toText(payload.workspace_folder) ||
+    toText(metadata.cwd) ||
+    toText(metadata.projectPath) ||
+    toText(metadata.project_path) ||
+    toText(metadata.workspaceFolder) ||
+    toText(metadata.workspace_folder) ||
+    toText(session.cwd) ||
+    toText(turn.cwd)
+  );
+}
+
+function resolveRepositoryName(workspacePath: string): string {
+  const normalizedPath = workspacePath.trim();
+  if (!normalizedPath) {
+    return "global";
+  }
+  const cached = REPOSITORY_NAME_CACHE.get(normalizedPath);
+  if (cached) {
+    return cached;
+  }
+
+  const gitRoot = findGitRoot(normalizedPath);
+  const label = gitRoot
+    ? readRepositoryNameFromGitConfig(gitRoot) || basename(gitRoot)
+    : basename(normalizedPath);
+  REPOSITORY_NAME_CACHE.set(normalizedPath, label || normalizedPath);
+  return label || normalizedPath;
+}
+
+function findGitRoot(workspacePath: string): string | undefined {
+  let current = workspacePath;
+  try {
+    if (existsSync(current) && statSync(current).isFile()) {
+      current = dirname(current);
+    }
+  } catch {
+    return undefined;
+  }
+
+  while (current && current !== dirname(current)) {
+    if (existsSync(join(current, ".git"))) {
+      return current;
+    }
+    current = dirname(current);
+  }
+  return undefined;
+}
+
+function readRepositoryNameFromGitConfig(gitRoot: string): string | undefined {
+  const configPath = join(gitRoot, ".git", "config");
+  if (!existsSync(configPath)) {
+    return undefined;
+  }
+  try {
+    const config = readFileSync(configPath, "utf8");
+    const originUrl =
+      /^\s*url\s*=\s*(.+)$/m.exec(config)?.[1]?.trim() || "";
+    return repositoryNameFromRemoteUrl(originUrl);
+  } catch {
+    return undefined;
+  }
+}
+
+function repositoryNameFromRemoteUrl(remoteUrl: string): string | undefined {
+  if (!remoteUrl) {
+    return undefined;
+  }
+  const withoutQuery = remoteUrl.split(/[?#]/)[0] || remoteUrl;
+  const match = /[:/]([^/:]+?)(?:\.git)?$/.exec(withoutQuery);
+  return match?.[1];
+}
+
+function getRepositoryLabel(record: JsonResult): string {
+  return toText(record.repository) || toText(record.project) || "global";
 }
 
 function renderHealthPlane(health: JsonResult): string {
@@ -1705,8 +2000,6 @@ function renderQualityPlane(
     toNumber(quality.evidenceChunks) ?? toNumber(totals.evidenceChunks) ?? 0;
   const evidenceCoverage = toNumber(quality.evidenceCoverage);
   const staleMemories = toNumber(quality.staleMemories) ?? 0;
-  const nowMs = Date.now();
-  const reviewCounts = getMemoryReviewCounts(memories, nowMs);
   const usedChars = toNumber(contextPreview.usedChars) ?? 0;
   const maxChars = toNumber(contextPreview.maxChars) ?? 0;
   const contextRatio = maxChars > 0 ? usedChars / maxChars : 0;
@@ -1751,21 +2044,6 @@ function renderQualityPlane(
         </div>
       </section>
       <section class="panel health-plane">${renderHealthPlane(health)}</section>
-      <section class="stat-panel full-span">
-        <div class="panel-head"><h2>Memory Review</h2><span class="muted">${reviewCounts.all} loaded, ${reviewCounts.archived} archived</span></div>
-        <div class="stat-body">
-          <div class="review-toolbar">
-            ${renderReviewFilterButton("All", "all", reviewCounts.all)}
-            ${renderReviewFilterButton("Needs review", "needs-review", reviewCounts.needsReview)}
-            ${renderReviewFilterButton("Stale", "stale", reviewCounts.stale)}
-            ${renderReviewFilterButton("Probably low confidence", "probably-low-confidence", reviewCounts.probablyLowConfidence)}
-            ${renderReviewFilterButton("Pinned", "pinned", reviewCounts.pinned)}
-            ${renderReviewFilterButton("Archived", "archived", reviewCounts.archived)}
-          </div>
-          <div id="reviewSummary" class="review-summary"></div>
-          <div class="memory-review-list">${renderMemoryReviewItems(memories, nowMs)}</div>
-        </div>
-      </section>
     </div>
   `;
 }
@@ -1887,7 +2165,33 @@ function renderMemoryReviewItem(memory: JsonResult, nowMs: number): string {
       </div>
       ${tags.length ? `<div class="memory-review-meta">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div>` : ""}
       <code class="text-block compact">${escapeHtml(body || "No body recorded.")}</code>
+      ${renderMemoryReviewActions(id, title, confidence)}
     </article>
+  `;
+}
+
+function renderMemoryReviewActions(
+  id: number | undefined,
+  title: string,
+  confidence: number,
+): string {
+  if (id === undefined) {
+    return "";
+  }
+
+  return `
+    <form class="memory-review-actions" data-memory-review-form data-memory-id="${id}">
+      <label>
+        Confidence
+        <input type="number" name="confidencePercent" min="0" max="100" step="1" value="${Math.round(clampRatio(confidence) * 100)}" required>
+      </label>
+      <label>
+        Review comment
+        <textarea name="comment" rows="1" maxlength="600" placeholder="Reason for this confidence change" required></textarea>
+      </label>
+      <button type="submit">Update</button>
+      <button type="button" class="danger-button" data-memory-delete="${id}" data-memory-title="${escapeHtml(title)}">Delete</button>
+    </form>
   `;
 }
 
@@ -1981,7 +2285,7 @@ function renderOperationsPlane(
           ${renderDistribution("Task status", taskStatusDistribution(activeTasks, completedTasks, failedTasks), "No task status data yet.")}
           ${renderDistribution("Agent workload", agentWorkloadDistribution(agents), "No agent workload data yet.")}
           ${renderDistribution("Activity types", countByField(activities, "type"), "No activity data yet.")}
-          ${renderDistribution("Project signal", projectSignalDistribution(tasks, activities), "No project signal data yet.")}
+          ${renderDistribution("Repository signal", repositorySignalDistribution(tasks, activities), "No repository signal data yet.")}
         </div>
       </section>
     </div>
@@ -2121,14 +2425,14 @@ function agentWorkloadDistribution(
   );
 }
 
-function projectSignalDistribution(
+function repositorySignalDistribution(
   tasks: JsonResult[],
   activities: JsonResult[],
 ): DashboardDistributionItem[] {
   const counts = new Map<string, number>();
   for (const record of [...tasks, ...activities]) {
-    const project = toText(record.project) || "global";
-    counts.set(project, (counts.get(project) ?? 0) + 1);
+    const repository = getRepositoryLabel(record);
+    counts.set(repository, (counts.get(repository) ?? 0) + 1);
   }
   return sortDistribution(
     Array.from(counts, ([label, value]) => ({
@@ -2305,7 +2609,7 @@ function renderTaskInspector(
       <div class="key">Role</div><div>${escapeHtml(toText(task.role) || toText(agent.role) || "primary")}</div>
       <div class="key">Task</div><div>${escapeHtml(taskId)}</div>
       <div class="key">Parent</div><div>${escapeHtml(toText(task.parentTaskId) || "root")}</div>
-      <div class="key">Project</div><div>${escapeHtml(toText(task.project) || "global")}</div>
+      <div class="key">Repository</div><div>${escapeHtml(getRepositoryLabel(task))}</div>
       <div class="key">Status</div><div><span class="state state-${escapeHtml(toText(task.status) || "active")}">${escapeHtml(toText(task.status) || "active")}</span></div>
       <div class="key">Seen</div><div>${escapeHtml(formatIsoCompact(toText(task.lastSeenAt)))}</div>
     </div>
@@ -2354,21 +2658,24 @@ function renderMemoryPlane(
   memories: JsonResult[],
   contextPreview: JsonResult,
 ): string {
-  const rows = memories.length
-    ? memories
-        .slice(0, 80)
-        .map(
-          (memory) => `
-            <li>
-              <strong>${escapeHtml(toText(memory.title) || "Untitled memory")}</strong>
-              <span>${escapeHtml(toText(memory.kind) || "memory")} / ${escapeHtml(toText(memory.project) || "global")}</span>
-              <code>${escapeHtml(clipLabel(toText(memory.body) || "", 260))}</code>
-            </li>`,
-        )
-        .join("")
-    : `<li class="muted">No durable memories yet.</li>`;
-
-  return `<div class="panel-head"><h2>Durable Memory</h2><span class="muted">Separate from live control plane</span></div><div class="inspector-body"><ul>${rows}</ul><div class="section"><h3>Current Context Pack</h3><div class="context text-block">${escapeHtml(toText(contextPreview.text) || "No context yet.")}</div></div></div>`;
+  const nowMs = Date.now();
+  const reviewCounts = getMemoryReviewCounts(memories, nowMs);
+  return `
+    <div class="panel-head"><h2>Memory Review</h2><span class="muted">${reviewCounts.all} loaded, ${reviewCounts.archived} archived</span></div>
+    <div class="inspector-body">
+      <div class="review-toolbar">
+        ${renderReviewFilterButton("All", "all", reviewCounts.all)}
+        ${renderReviewFilterButton("Needs review", "needs-review", reviewCounts.needsReview)}
+        ${renderReviewFilterButton("Stale", "stale", reviewCounts.stale)}
+        ${renderReviewFilterButton("Probably low confidence", "probably-low-confidence", reviewCounts.probablyLowConfidence)}
+        ${renderReviewFilterButton("Pinned", "pinned", reviewCounts.pinned)}
+        ${renderReviewFilterButton("Archived", "archived", reviewCounts.archived)}
+      </div>
+      <div id="reviewSummary" class="review-summary"></div>
+      <div class="memory-review-list">${renderMemoryReviewItems(memories, nowMs)}</div>
+      <div class="section"><h3>Current Context Pack</h3><div class="context text-block">${escapeHtml(toText(contextPreview.text) || "No context yet.")}</div></div>
+    </div>
+  `;
 }
 
 function pickFocusTask(tasks: JsonResult[]): JsonResult | undefined {
@@ -2399,8 +2706,28 @@ function renderActivityItems(activities: JsonResult[]): string {
     .join("");
 }
 
-function metric(label: string, value: number): string {
-  return `<div class="metric"><div class="k">${escapeHtml(label)}</div><div class="v">${value}</div></div>`;
+function metric(
+  label: string,
+  value: number,
+  detail: string,
+  tone: "default" | "accent" | "good" | "warn" = "default",
+  size: "normal" | "primary" = "normal",
+): string {
+  const sizeClass = size === "primary" ? " primary" : "";
+  const toneClass = tone === "default" ? "" : ` ${tone}`;
+  return `
+    <article class="kpi-card${sizeClass}">
+      <div class="kpi-card-top">
+        <div class="kpi-label">${escapeHtml(label)}</div>
+        <span class="kpi-marker${toneClass}" aria-hidden="true"></span>
+      </div>
+      <div class="kpi-value">${escapeHtml(formatDashboardNumber(value))}</div>
+      <div class="kpi-detail">${escapeHtml(detail)}</div>
+    </article>`;
+}
+
+function formatDashboardNumber(value: number): string {
+  return Number.isFinite(value) ? Math.round(value).toLocaleString("en-US") : "0";
 }
 
 function arrayOfRecords(value: unknown): JsonResult[] {
@@ -2676,7 +3003,7 @@ function buildGraphNodes(
         detail: toText(task.status) || "active",
         rows: [
           { label: "Owner", value: actor },
-          { label: "Project", value: toText(task.project) || "global" },
+          { label: "Repository", value: getRepositoryLabel(task) },
         ],
         status: toText(task.status) || "active",
         x: actorX + columnGap,

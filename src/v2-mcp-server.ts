@@ -56,7 +56,7 @@ export async function startV2McpServer(
       {
         name: "agent_event",
         description:
-          "Record a live v2 event from an agent, subagent, task, tool call, or outcome. Put visible reasoning summaries in payload.reasoningSummary or payload.rationale.",
+          "Record a live event from an agent, subagent, task, tool call, or outcome. Put visible reasoning summaries in payload.reasoningSummary or payload.rationale.",
         inputSchema: {
           type: "object",
           properties: {
@@ -293,7 +293,7 @@ export async function startV2McpServer(
       {
         name: "dashboard_snapshot",
         description:
-          "Return the live Retentia v2 dashboard snapshot: agents, tasks, subtasks, activities, memories, graph edges, and context preview.",
+          "Return the live Retentia dashboard snapshot: agents, tasks, subtasks, activities, memories, graph edges, and context preview.",
         inputSchema: {
           type: "object",
           properties: {
@@ -304,7 +304,7 @@ export async function startV2McpServer(
       {
         name: "health_check",
         description:
-          "Run a non-destructive Retentia v2 health check over the SQLite store, schema, FTS index, and writeability.",
+          "Run a non-destructive Retentia health check over the SQLite store, schema, FTS index, and writeability.",
         inputSchema: {
           type: "object",
           properties: {},

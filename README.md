@@ -5,7 +5,7 @@ AI-assisted development. It gives Codex, Claude Code, Copilot-oriented workflows
 and other MCP-compatible clients a durable SQLite memory instead of relying only
 on chat context.
 
-The current runtime is Retentia v2. It stores:
+The current runtime is Retentia. It stores:
 
 - events: task starts, completions, failures, tool calls, file changes, decisions,
   and other execution activity
@@ -72,14 +72,13 @@ credentials, private tokens, production customer data, or raw participant data.
 .
 ├── src/
 │   ├── cli.ts              # CLI entrypoint
-│   ├── v2-engine.ts        # SQLite-backed v2 memory/event/graph engine
+│   ├── v2-engine.ts        # SQLite-backed memory/event/graph engine
 │   ├── v2-mcp-server.ts    # MCP stdio server exposing Retentia tools
 │   ├── v2-task-ingest.ts   # Local session-log ingestion
-│   ├── v2-types.ts         # v2 public data types
-│   ├── store.ts            # legacy v1 store
-│   └── worker-*.ts         # legacy/local worker support
+│   └── v2-types.ts         # public data types
 ├── vscode-extension/       # VS Code dashboard and command integration
 ├── scripts/
+│   ├── clean-dist.mjs      # removes generated build output before compiling
 │   └── vscode-install.mjs  # one-command local installer
 ├── tests/                  # Vitest coverage
 ├── docs/                   # benchmark notes and images
@@ -123,7 +122,7 @@ node dist/cli.js
 
 ## Install Everything Locally
 
-The recommended local setup command is:
+The recommended local install command is:
 
 ```bash
 npm run install:vscode
@@ -216,19 +215,12 @@ Show help:
 retentia help
 ```
 
-Retentia v2 commands are available both as top-level commands and under the
-explicit `v2` namespace.
-
-These two forms are equivalent:
-
-```bash
-retentia search --query "billing"
-retentia v2 search --query "billing"
-```
+Retentia commands are top-level only. There is no compatibility namespace for
+older command surfaces.
 
 ## Data File
 
-Default v2 database:
+Default database:
 
 ```text
 ~/.retentia/retentia-v2.db
@@ -243,17 +235,10 @@ retentia search --data-file /tmp/retentia-v2.db --query "oauth"
 Override by environment:
 
 ```bash
-RETENTIA_V2_DB_FILE=/tmp/retentia-v2.db retentia dashboard
+RETENTIA_DB_FILE=/tmp/retentia-v2.db retentia dashboard
 ```
 
-Legacy v1 commands use a different store by default:
-
-```text
-~/.retentia/retentia.db
-```
-
-The v1 store also recognizes old `RETENTIA_*` environment variables for
-backward compatibility.
+Older store formats and command surfaces are not supported.
 
 ## MCP Setup
 
@@ -275,13 +260,6 @@ Use a custom MCP server name:
 
 ```bash
 retentia install --client codex --name retentia
-```
-
-`setup` and `enable` are aliases for the same current v2 registration path:
-
-```bash
-retentia setup
-retentia enable
 ```
 
 Verify with Codex:
@@ -326,7 +304,7 @@ command.
 
 ## MCP Tools
 
-Retentia v2 exposes these MCP tools.
+Retentia exposes these MCP tools.
 
 ### `agent_event`
 
@@ -523,7 +501,7 @@ For non-trivial technical work, the intended Retentia workflow is:
 
 ### `init`
 
-Initializes the v2 store and prints the active data file.
+Initializes the store and prints the active data file.
 
 ```bash
 retentia init
@@ -563,25 +541,6 @@ Starts the MCP stdio server.
 retentia mcp
 ```
 
-### `migrate`
-
-Migrates legacy v1 memory into the v2 store.
-
-```bash
-retentia migrate --from-data-file ~/.retentia/retentia.db
-```
-
-With an explicit v2 target:
-
-```bash
-retentia migrate \
-  --from-data-file ~/.retentia/retentia.db \
-  --data-file ~/.retentia/retentia-v2.db
-```
-
-Migration creates v2 events, memories, and `distilled_into` graph edges from the
-legacy entries.
-
 ### `event`
 
 Adds an execution event.
@@ -604,8 +563,8 @@ retentia event \
   --type decision \
   --source codex \
   --project retentia \
-  --summary "Document v2 as the default path" \
-  --payload '{"reason":"CLI top-level commands route to v2"}'
+  --summary "Document top-level Retentia commands" \
+  --payload '{"reason":"CLI commands route to the current store"}'
 ```
 
 ### `memory`
@@ -737,7 +696,7 @@ Imports local session events from supported providers.
 retentia ingest --providers all --lookback-days 7 --max-import 100
 ```
 
-Supported v2 providers:
+Supported providers:
 
 - `copilot`
 - `codex`
@@ -749,7 +708,7 @@ Aliases:
 - `claude` and `claude_code` map to `claude-code`
 - `all` means `copilot,codex,claude-code`
 
-The v2 importer keeps provider-specific metadata where available:
+The importer keeps provider-specific metadata where available:
 
 - Copilot: model, conversation ID, request ID, workspace folder, tool calls, and
   tool request metadata
@@ -777,50 +736,6 @@ Claude:     ~/.claude/projects
 Copilot:    VS Code workspaceStorage transcript locations
 ```
 
-### `legacy`
-
-Runs legacy v1 commands for old stores and emergency inspection.
-
-```bash
-retentia legacy search --query "old decision"
-retentia legacy list-projects
-retentia legacy execution-report --limit 200
-```
-
-Legacy v1 commands include:
-
-- `init`
-- `kpis`
-- `add-observation`
-- `add-summary`
-- `search`
-- `timeline`
-- `get`
-- `context`
-- `list-projects`
-- `list-entries`
-- `io-trace`
-- `execution-report`
-- `sync-tasks`
-
-Prefer v2 commands for new work. Use `retentia migrate` when old data should be
-available through v2 MCP tools.
-
-### `worker`
-
-Controls the legacy/local HTTP worker.
-
-```bash
-retentia worker status
-retentia worker start
-retentia worker stop
-retentia worker restart
-retentia worker run
-```
-
-The v2 MCP server does not require this worker for normal use. These commands
-remain for compatibility with older local workflows and extension surfaces.
-
 ## VS Code Extension
 
 The extension is in `vscode-extension/`.
@@ -836,7 +751,6 @@ Open the command palette and search for `Retentia`.
 Important commands:
 
 - `Retentia: Install MCP for Codex`
-- `Retentia: Enable MCP for Codex`
 - `Retentia: Initialize Store`
 - `Retentia: Import Copilot, Codex, and Claude Code Tasks`
 - `Retentia: Run Doctor`
@@ -853,10 +767,10 @@ The Retentia activity bar view includes a compact Quick Input panel. The panel
 keeps frequent work visible: add a memory, save a session summary, open the
 dashboard, run Doctor, sync tasks, and refresh status. `Add Memory` and
 `Save Summary` open focused popover forms that can be closed with the close
-button, Cancel, the backdrop, or Escape. Setup and path settings remain in the
-command palette so the sidebar stays focused on daily capture.
+button, Cancel, the backdrop, or Escape. MCP installation and path settings
+remain in the command palette so the sidebar stays focused on daily capture.
 
-`Retentia: Inspect Agents and Swarms` opens the v2 control plane dashboard. It
+`Retentia: Inspect Agents and Swarms` opens the control plane dashboard. It
 has four tabs:
 
 - `Control`: live agent/task map with an inspector for reasoning, activity, and
@@ -880,7 +794,7 @@ Useful settings:
 | `retentia.autoSyncMaxFiles`     | Max session files scanned per provider.                                   |
 | `retentia.codexSessionsPath`    | Optional Codex session path override.                                     |
 | `retentia.claudeSessionsPath`   | Optional Claude session path override.                                    |
-| `retentia.executionReportLimit` | Max entries loaded into visualizer and explorer views.                    |
+| `retentia.dashboardLimit`       | Max recent events loaded into dashboard views.                            |
 
 ## Development
 
@@ -993,7 +907,7 @@ Add at least one memory:
 retentia memory \
   --kind fact \
   --title "Retentia is installed" \
-  --body "The local v2 store is available." \
+  --body "The local Retentia store is available." \
   --project retentia
 ```
 
@@ -1007,14 +921,6 @@ Then:
 
 ```bash
 retentia dashboard --limit 80
-```
-
-### You need old v1 data in v2
-
-Run:
-
-```bash
-retentia migrate --from-data-file ~/.retentia/retentia.db
 ```
 
 ## Security And Privacy

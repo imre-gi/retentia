@@ -39,6 +39,30 @@ const RETENTIA_READ_MARKERS = [
   "dashboard_snapshot",
 ];
 const RETENTIA_WRITE_MARKERS = ["memory_add", "agent_event"];
+const TOOL_DISCOVERY_MARKERS = ["tool_search", "tools_search"];
+const RETENTIA_REPAIR_MARKERS = [
+  "diagnos",
+  "repair",
+  "restore",
+  "fix",
+  "broken",
+  "fail",
+  "unavailable",
+  "connectivity",
+  "connection",
+  "transport",
+  "transporter",
+  "config",
+  "mcp",
+  "fallisce",
+  "falliscono",
+  "rotto",
+  "ripara",
+  "ripristina",
+  "connettiv",
+];
+const RETENTIA_POLICY_MESSAGE =
+  "Retentia is the mandatory local working memory for technical tasks. Before using technical tools, inspect Retentia with memory_search, memory_context, or dashboard_snapshot. If Retentia tools are not initially visible, first use available tool discovery such as tool_search to expose them. During execution, keep durable findings, blockers, decisions, and progress in Retentia. Before finishing the task, write a completion log to Retentia with agent_event or memory_add. If Retentia remains unavailable, stop and report that blocker explicitly. Exception: when the task is specifically to diagnose, repair, or restore Retentia itself, Retentia may be skipped if unavailable; proceed with local config, transport, and connectivity checks and document the bypass.";
 
 function readPayload() {
   try {
@@ -133,6 +157,10 @@ function resolveTurn(payload) {
 
 function statePath(payload) {
   const { session, turn } = resolveTurn(payload);
+  return turnStatePath(session, turn);
+}
+
+function turnStatePath(session, turn) {
   return join(STATE_DIR, session + "__" + turn + ".json");
 }
 
@@ -142,6 +170,7 @@ function defaultState() {
     retentiaUpdated: false,
     pendingUpdate: false,
     substantiveToolUsed: false,
+    retentiaRepairTask: false,
   };
 }
 
@@ -151,6 +180,37 @@ function loadState(path) {
 
 function saveState(path, state) {
   writeJsonFile(path, state);
+}
+
+function textFromPayload(payload) {
+  const direct = [
+    payload.prompt,
+    payload.message,
+    payload.input,
+    payload.text,
+    payload.user_prompt,
+    payload.userPrompt,
+  ]
+    .filter((value) => typeof value === "string")
+    .join(" ");
+
+  if (direct.trim()) {
+    return direct;
+  }
+
+  try {
+    return JSON.stringify(payload).slice(0, 8000);
+  } catch {
+    return "";
+  }
+}
+
+function isRetentiaRepairTask(payload) {
+  const text = textFromPayload(payload).toLowerCase();
+  return (
+    text.includes("retentia") &&
+    RETENTIA_REPAIR_MARKERS.some((marker) => text.includes(marker))
+  );
 }
 
 function cleanupState(payload, path) {
@@ -192,29 +252,50 @@ function isRetentiaWrite(toolName) {
   );
 }
 
+function isToolDiscoveryTool(toolName) {
+  const normalized = String(toolName || "").toLowerCase();
+  return TOOL_DISCOVERY_MARKERS.some((marker) => normalized.includes(marker));
+}
+
 function isSubstantiveTool(toolName) {
-  return Boolean(toolName) && !isRetentiaTool(toolName);
+  return (
+    Boolean(toolName) &&
+    !isRetentiaTool(toolName) &&
+    !isToolDiscoveryTool(toolName)
+  );
 }
 
 function userPromptSubmit(payload) {
-  startTurn(payload);
+  const { session, turn } = startTurn(payload);
+  const path = turnStatePath(session, turn);
+  const state = loadState(path);
+  state.retentiaRepairTask = isRetentiaRepairTask(payload);
+  saveState(path, state);
+
   output({
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",
-      additionalContext:
-        "Retentia is the mandatory local working memory for technical tasks. Before using technical tools, inspect Retentia with memory_search, memory_context, or dashboard_snapshot. During execution, keep durable findings, blockers, decisions, and progress in Retentia. Before finishing the task, write a completion log to Retentia with agent_event or memory_add. If Retentia is unavailable, stop and report that blocker explicitly.",
+      additionalContext: RETENTIA_POLICY_MESSAGE,
     },
   });
 }
 
 function preToolUse(payload) {
   const toolName = payload.tool_name || payload.toolName || "";
-  if (isRetentiaTool(toolName) || !isSubstantiveTool(toolName)) {
+  if (
+    isRetentiaTool(toolName) ||
+    isToolDiscoveryTool(toolName) ||
+    !isSubstantiveTool(toolName)
+  ) {
     return;
   }
 
   const path = statePath(payload);
   const state = loadState(path);
+  if (state.retentiaRepairTask) {
+    return;
+  }
+
   if (state.retentiaInspected) {
     return;
   }
@@ -256,6 +337,11 @@ function stop(payload) {
   const state = loadState(path);
 
   if (payload.stop_hook_active || payload.stopHookActive) {
+    cleanupState(payload, path);
+    return;
+  }
+
+  if (state.retentiaRepairTask) {
     cleanupState(payload, path);
     return;
   }
@@ -334,6 +420,9 @@ function installFlow() {
   log("Writing Claude Code MCP config reference");
   writeClaudeCodeConfigReference();
 
+  log("Installing Retentia MCP for VS Code when available");
+  writeVsCodeMcpConfigs();
+
   log("Installing Retentia-first hooks for Codex and Claude Code");
   installRetentiaHooks();
 
@@ -381,6 +470,57 @@ function writeClaudeCodeConfigReference() {
   mkdirSync(dirname(outputFile), { recursive: true });
   writeFileSync(outputFile, result.stdout, "utf8");
   log(`Claude Code MCP config reference: ${outputFile}`);
+}
+
+function writeVsCodeMcpConfigs() {
+  const config = {
+    type: "stdio",
+    command: "node",
+    args: [
+      join(ROOT_DIR, "dist", "cli.js"),
+      "mcp",
+      "--data-file",
+      join(homedir(), ".retentia", "retentia-v2.db"),
+    ],
+  };
+
+  for (const configPath of resolveVsCodeMcpConfigPaths()) {
+    const parsed = readJsonObject(configPath, { servers: {}, inputs: [] });
+    if (
+      !parsed.servers ||
+      typeof parsed.servers !== "object" ||
+      Array.isArray(parsed.servers)
+    ) {
+      parsed.servers = {};
+    }
+    if (!Array.isArray(parsed.inputs)) {
+      parsed.inputs = [];
+    }
+
+    parsed.servers.retentia = config;
+    writeJson(configPath, parsed);
+    log(`VS Code Retentia MCP config: ${configPath}`);
+  }
+}
+
+function resolveVsCodeMcpConfigPaths() {
+  const explicit = (process.env.RETENTIA_VSCODE_MCP_CONFIG || "").trim();
+  if (explicit) {
+    return [explicit];
+  }
+
+  const paths = [defaultVsCodeMcpFile()];
+  const profilesDir = join(dirname(defaultVsCodeMcpFile()), "profiles");
+  try {
+    for (const entry of readdirSync(profilesDir)) {
+      const candidate = join(profilesDir, entry, "mcp.json");
+      if (existsSync(candidate) && statSync(candidate).isFile()) {
+        paths.push(candidate);
+      }
+    }
+  } catch {}
+
+  return unique(paths);
 }
 
 function installRetentiaHooks() {

@@ -823,7 +823,7 @@ export class V2MemoryEngine {
         ? "SQLite data file exists."
         : "SQLite data file has not been created on disk yet.",
       { path: this.dbFile },
-      existsSync(this.dbFile) ? undefined : "Run retentia init or any v2 command that opens the store.",
+      existsSync(this.dbFile) ? undefined : "Run retentia init or any command that opens the store.",
     );
 
     const requiredTables = [
@@ -840,8 +840,8 @@ export class V2MemoryEngine {
       "schema",
       missingTables.length === 0 ? "pass" : "fail",
       missingTables.length === 0
-        ? "Required v2 tables are present."
-        : "Required v2 tables are missing.",
+        ? "Required Retentia tables are present."
+        : "Required Retentia tables are missing.",
       { requiredTables, missingTables },
       missingTables.length === 0 ? undefined : "Run retentia init against this data file.",
     );

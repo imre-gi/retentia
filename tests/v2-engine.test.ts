@@ -185,8 +185,8 @@ describe("V2MemoryEngine", () => {
       const oldMemory = engine.addMemory({
         kind: "fact",
         project: "retentia",
-        title: "Old install note",
-        body: "The old install flow used a worker.",
+        title: "Stale install note",
+        body: "The install flow writes MCP configuration directly.",
         tags: ["install"],
         createdAt: "2020-01-01T00:00:00.000Z",
       });
@@ -194,7 +194,7 @@ describe("V2MemoryEngine", () => {
         kind: "fact",
         project: "retentia",
         title: "Duplicate install note",
-        body: "The worker note is duplicate context.",
+        body: "The MCP configuration note is duplicate context.",
         tags: ["duplicate"],
       });
       engine.addEvidence({
@@ -250,13 +250,13 @@ describe("V2MemoryEngine", () => {
         toType: "agent",
         toId: "backend-subagent",
         relation: "delegated_to",
-        metadata: { task: "migration checks" },
+        metadata: { task: "schema checks" },
       });
 
       const edges = engine.listEdgesForNode("agent", "primary");
       expect(edges).toHaveLength(1);
       expect(edges[0]?.toId).toBe("backend-subagent");
-      expect(edges[0]?.metadata).toEqual({ task: "migration checks" });
+      expect(edges[0]?.metadata).toEqual({ task: "schema checks" });
     });
   });
 

@@ -23,12 +23,8 @@
     "contributes": {
         "commands": [
             {
-                "command": "retentia.setup",
+                "command": "retentia.installMcp",
                 "title": "Retentia: Install MCP for Codex"
-            },
-            {
-                "command": "retentia.enableMcp",
-                "title": "Retentia: Enable MCP for Codex"
             },
             {
                 "command": "retentia.initStore",
@@ -165,18 +161,18 @@
                     "default": "",
                     "description": "Optional custom path to Claude Code sessions directory. Leave empty to use ~/.claude/projects."
                 },
-                "retentia.executionReportLimit": {
+                "retentia.dashboardLimit": {
                     "type": "number",
                     "default": 600,
                     "minimum": 50,
                     "maximum": 5000,
-                    "description": "Maximum number of entries loaded for the dashboard project explorer and execution visualizer."
+                    "description": "Maximum number of recent events loaded for the Retentia dashboard."
                 }
             }
         }
     },
     "scripts": {
-        "build": "tsc -p tsconfig.json",
+        "build": "node ../scripts/clean-dist.mjs vscode-extension/dist && tsc -p tsconfig.json",
         "package": "npm run build && vsce package --allow-missing-repository",
         "install:local": "node ./scripts/local-install.mjs",
         "uninstall:local": "node ./scripts/local-uninstall.mjs"

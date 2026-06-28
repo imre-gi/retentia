@@ -15,7 +15,7 @@ cd <repo-root>
 npm run install:vscode
 ```
 
-This root command installs both the core Retentia runtime and this extension, then runs MCP setup.
+This root command installs both the core Retentia runtime and this extension, then installs the MCP stdio server configuration.
 
 ### Clean reinstall
 
@@ -59,8 +59,7 @@ RETENTIA_VSCODE_CLI="<path-or-command-for-code>" npm run install:local
 
 | Command title | Command ID | What it does |
 | --- | --- | --- |
-| `Retentia: Setup (Enable + Start Worker)` | `retentia.setup` | Enables MCP and starts worker. |
-| `Retentia: Enable MCP` | `retentia.enableMcp` | Registers MCP server in Codex config. |
+| `Retentia: Install MCP for Codex` | `retentia.installMcp` | Registers the MCP stdio server in Codex config. |
 | `Retentia: Initialize Store` | `retentia.initStore` | Initializes and verifies local storage. |
 | `Retentia: Sync LLM Tasks (Copilot/Codex/Claude Code)` | `retentia.syncTasks` | Imports provider task execution events. |
 | `Retentia: Project Explorer + Visualizer` | `retentia.projectExplorer` | Opens dashboard exploration view. |
@@ -73,7 +72,7 @@ RETENTIA_VSCODE_CLI="<path-or-command-for-code>" npm run install:local
 | `Retentia: Open Memory File` | `retentia.openMemoryFile` | Open active SQLite file in editor. |
 
 Sidebar:
-- `Retentia` activity bar icon includes `Quick Input` for setup, worker controls, task sync, and direct observation/summary entry forms.
+- `Retentia` activity bar icon includes `Quick Input` for MCP install, task sync, and direct memory/session-summary entry forms.
 
 ## Settings
 
@@ -88,15 +87,15 @@ Sidebar:
 | `retentia.autoSyncMaxFiles` | `24` | Max files scanned per provider. |
 | `retentia.codexSessionsPath` | `""` | Optional Codex sessions path override. |
 | `retentia.claudeSessionsPath` | `""` | Optional Claude sessions path override. |
-| `retentia.executionReportLimit` | `600` | Max entries loaded into visualizer/explorers. |
+| `retentia.dashboardLimit` | `600` | Max recent events loaded into dashboard views. |
 
 ## Dashboard Walkthrough
 
 The dashboard provides:
 
-- Action bar: `Refresh`, `Setup`, `Sync LLM Tasks`, `Start Worker`, `Stop Worker`.
-- KPI cards: worker and MCP state, total tasks, projects, providers, agents.
-- Runtime panel: PID, uptime, endpoint, MCP command/args, DB file.
+- Action bar: `Refresh`, `Install MCP`, `Sync LLM Tasks`.
+- KPI cards: events, tasks, memories, evidence, projects, providers, and agents.
+- Runtime panel: MCP command/args and active SQLite DB file.
 - Provider Sync matrix: detected/imported/skipped/failed by provider.
 - Execution Visualizer: distribution bars by provider/status/agent/model.
 - Execution trend charts: daily and weekly execution deltas.
@@ -150,7 +149,7 @@ Set `retentia.cliPath` to:
 codex mcp list
 codex mcp get retentia
 cd <repo-root>
-node dist/cli.js setup
+node dist/cli.js install --client codex
 ```
 
 ## Development

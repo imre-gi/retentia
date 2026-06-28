@@ -8,7 +8,5 @@ export const DEFAULT_V2_DATA_FILE = join(
 );
 
 export function getV2DataFilePath(override?: string): string {
-  return (
-    override?.trim() || process.env.RETENTIA_V2_DB_FILE || DEFAULT_V2_DATA_FILE
-  );
+  return override?.trim() || process.env.RETENTIA_DB_FILE || DEFAULT_V2_DATA_FILE;
 }

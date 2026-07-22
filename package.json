@@ -42,6 +42,10 @@
   "engines": {
     "node": ">=20"
   },
+  "allowScripts": {
+    "better-sqlite3": true,
+    "esbuild": true
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "better-sqlite3": "^12.4.1"

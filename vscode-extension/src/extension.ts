@@ -1338,7 +1338,18 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       .map-panel, .inspector { min-width: 0; min-height: 0; height: 100%; max-height: 100%; overflow: hidden; display: flex; flex-direction: column; }
       .panel-head { flex: 0 0 auto; padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
       .panel-head h2 { margin: 0; font-size: 14px; }
-      .graph { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: 10px; background: oklch(0.19 0.018 248); overscroll-behavior: contain; }
+      .panel-head-copy { min-width: 0; display: grid; gap: 2px; }
+      .panel-head-copy .muted { font-size: 11px; }
+      .map-panel .panel-head { flex-wrap: wrap; }
+      .map-controls { display: flex; align-items: center; gap: 5px; }
+      .map-control { min-width: 30px; height: 28px; padding: 3px 8px; line-height: 1; font-variant-numeric: tabular-nums; }
+      .map-control.zoom-reset { min-width: 48px; }
+      .map-control.zoom-fit { min-width: 42px; }
+      .map-control:disabled { opacity: .45; cursor: not-allowed; }
+      .map-control:disabled:hover { border-color: var(--line); background: var(--panel2); }
+      .graph { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: 10px; background: oklch(0.19 0.018 248); overscroll-behavior: contain; cursor: grab; touch-action: none; }
+      .graph.is-panning { cursor: grabbing; user-select: none; }
+      .graph:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
       .graph svg { display: block; width: 100%; min-width: 680px; height: auto; min-height: 500px; overflow: visible; }
       .map-edge { stroke-linecap: round; }
       .map-edge-active { stroke-dasharray: 8 10; animation: map-edge-flow 900ms linear infinite; }
@@ -1460,7 +1471,7 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       <div id="dashboardError"></div>
       <section id="overviewPlane" class="overview-plane"><div class="overview-head"><h2>Overview</h2><span class="muted">Live Retentia totals</span></div><div id="metricStrip" class="overview-kpi-grid"></div></section>
       <section id="controlPlane" class="workbench hidden">
-        <div class="map-panel"><div class="panel-head"><h2>Agent Task Map</h2><span class="muted">Select latest active task in inspector</span></div><div id="graph" class="graph"></div></div>
+        <div class="map-panel"><div class="panel-head"><div class="panel-head-copy"><h2>Agent Task Map</h2><span class="muted">Select latest active task in inspector</span></div><div class="map-controls" role="group" aria-label="Agent task map zoom controls"><button type="button" class="map-control" data-graph-zoom="out" aria-label="Zoom out" title="Zoom out">−</button><button type="button" class="map-control zoom-reset" data-graph-zoom="reset" aria-label="Reset zoom to 100 percent" title="Reset zoom"><span id="graphZoomValue" aria-live="polite">100%</span></button><button type="button" class="map-control" data-graph-zoom="in" aria-label="Zoom in" title="Zoom in">+</button><button type="button" class="map-control zoom-fit" data-graph-zoom="fit" aria-label="Fit map in viewport" title="Fit map in viewport">Fit</button></div></div><div id="graph" class="graph" tabindex="0" aria-label="Agent task map. Use Control or Command plus the mouse wheel, or the zoom controls, to zoom. Drag the background to pan."></div></div>
         <aside class="inspector"><div class="panel-head"><h2>Inspector</h2><span id="updatedAt" class="muted">n/a</span></div><div id="inspectorBody" class="inspector-body"></div></aside>
       </section>
       <section id="memoryPlane" class="panel memory-plane hidden"></section>
@@ -1475,10 +1486,113 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
       let selectedNodeId = "";
       let currentReviewFilter = "needs-review";
       let detailsByNode = {};
+      let graphZoom = 1;
+      let graphPan = null;
+      let graphViewport = { left: 0, top: 0 };
+      const graphZoomMin = 0.5;
+      const graphZoomMax = 2.5;
+      const graphZoomStep = 0.15;
 
       function setHtml(id, html) {
         const node = document.getElementById(id);
         if (node) node.innerHTML = html || "";
+      }
+
+      function getGraphElements() {
+        const graph = document.getElementById("graph");
+        const svg = graph ? graph.querySelector("svg") : null;
+        return { graph, svg };
+      }
+
+      function getGraphBaseSize(svg) {
+        const savedWidth = Number(svg.dataset.graphBaseWidth || "0");
+        const savedHeight = Number(svg.dataset.graphBaseHeight || "0");
+        if (savedWidth > 0 && savedHeight > 0) {
+          return { width: savedWidth, height: savedHeight };
+        }
+        const bounds = svg.getBoundingClientRect();
+        if (bounds.width <= 0 || bounds.height <= 0) return null;
+        svg.dataset.graphBaseWidth = String(bounds.width);
+        svg.dataset.graphBaseHeight = String(bounds.height);
+        return { width: bounds.width, height: bounds.height };
+      }
+
+      function updateGraphZoomControls() {
+        const hasGraph = Boolean(getGraphElements().svg);
+        const zoomValue = document.getElementById("graphZoomValue");
+        if (zoomValue) zoomValue.textContent = Math.round(graphZoom * 100) + "%";
+        for (const button of document.querySelectorAll("button[data-graph-zoom]")) {
+          const action = button.getAttribute("data-graph-zoom");
+          button.disabled = !hasGraph ||
+            (action === "out" && graphZoom <= graphZoomMin) ||
+            (action === "in" && graphZoom >= graphZoomMax) ||
+            (action === "reset" && Math.abs(graphZoom - 1) < 0.001);
+        }
+      }
+
+      function applyGraphZoom() {
+        const { graph, svg } = getGraphElements();
+        updateGraphZoomControls();
+        if (!graph || !svg) return false;
+        const baseSize = getGraphBaseSize(svg);
+        if (!baseSize) return false;
+        const width = baseSize.width * graphZoom;
+        const height = baseSize.height * graphZoom;
+        svg.style.width = width + "px";
+        svg.style.minWidth = width + "px";
+        svg.style.height = height + "px";
+        svg.style.minHeight = height + "px";
+        return true;
+      }
+
+      function rememberGraphViewport() {
+        const graph = document.getElementById("graph");
+        if (!graph || graph.clientWidth <= 0 || graph.clientHeight <= 0) return;
+        graphViewport = { left: graph.scrollLeft, top: graph.scrollTop };
+      }
+
+      function restoreGraphViewport() {
+        const graph = document.getElementById("graph");
+        if (!graph || graph.clientWidth <= 0 || graph.clientHeight <= 0) return;
+        graph.scrollLeft = graphViewport.left;
+        graph.scrollTop = graphViewport.top;
+        graphViewport = { left: graph.scrollLeft, top: graph.scrollTop };
+      }
+
+      function setGraphZoom(nextZoom, anchor) {
+        const { graph, svg } = getGraphElements();
+        if (!graph || !svg) return;
+        const oldZoom = graphZoom;
+        const clampedZoom = Math.min(graphZoomMax, Math.max(graphZoomMin, nextZoom));
+        if (Math.abs(clampedZoom - oldZoom) < 0.001) return;
+        const viewportX = anchor && Number.isFinite(anchor.x) ? anchor.x : graph.clientWidth / 2;
+        const viewportY = anchor && Number.isFinite(anchor.y) ? anchor.y : graph.clientHeight / 2;
+        const contentX = graph.scrollLeft + viewportX;
+        const contentY = graph.scrollTop + viewportY;
+        graphZoom = clampedZoom;
+        if (!applyGraphZoom()) return;
+        const ratio = graphZoom / oldZoom;
+        graphViewport = {
+          left: contentX * ratio - viewportX,
+          top: contentY * ratio - viewportY
+        };
+        restoreGraphViewport();
+      }
+
+      function fitGraphInViewport() {
+        const { graph, svg } = getGraphElements();
+        if (!graph || !svg) return;
+        const baseSize = getGraphBaseSize(svg);
+        if (!baseSize) return;
+        const availableWidth = Math.max(1, graph.clientWidth - 20);
+        const availableHeight = Math.max(1, graph.clientHeight - 20);
+        graphZoom = Math.min(
+          graphZoomMax,
+          Math.max(graphZoomMin, Math.min(availableWidth / baseSize.width, availableHeight / baseSize.height))
+        );
+        applyGraphZoom();
+        graphViewport = { left: 0, top: 0 };
+        restoreGraphViewport();
       }
 
       function selectNode(nodeId) {
@@ -1510,6 +1624,12 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
           button.classList.toggle("active", button.getAttribute("data-view") === currentView);
         }
         if (currentView === "memory") applyReviewFilter();
+        if (currentView === "control") {
+          window.requestAnimationFrame(() => {
+            applyGraphZoom();
+            restoreGraphViewport();
+          });
+        }
       }
 
       function applyReviewFilter() {
@@ -1553,6 +1673,72 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
 
       for (const button of document.querySelectorAll("button[data-view]")) {
         button.addEventListener("click", () => setView(button.getAttribute("data-view") || "control"));
+      }
+
+      for (const button of document.querySelectorAll("button[data-graph-zoom]")) {
+        button.addEventListener("click", () => {
+          const action = button.getAttribute("data-graph-zoom");
+          if (action === "in") setGraphZoom(graphZoom + graphZoomStep);
+          if (action === "out") setGraphZoom(graphZoom - graphZoomStep);
+          if (action === "reset") setGraphZoom(1);
+          if (action === "fit") fitGraphInViewport();
+        });
+      }
+
+      const graph = document.getElementById("graph");
+      if (graph) {
+        graph.addEventListener("scroll", rememberGraphViewport);
+        graph.addEventListener("wheel", (event) => {
+          if (!event.ctrlKey && !event.metaKey) return;
+          event.preventDefault();
+          const bounds = graph.getBoundingClientRect();
+          const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+          setGraphZoom(graphZoom * factor, {
+            x: event.clientX - bounds.left,
+            y: event.clientY - bounds.top
+          });
+        }, { passive: false });
+        graph.addEventListener("keydown", (event) => {
+          if (event.key === "+" || event.key === "=") {
+            event.preventDefault();
+            setGraphZoom(graphZoom + graphZoomStep);
+          }
+          if (event.key === "-") {
+            event.preventDefault();
+            setGraphZoom(graphZoom - graphZoomStep);
+          }
+          if (event.key === "0") {
+            event.preventDefault();
+            setGraphZoom(1);
+          }
+        });
+        graph.addEventListener("pointerdown", (event) => {
+          if (event.button !== 0 || (event.target.closest && event.target.closest(".map-node"))) return;
+          if (graph.scrollWidth <= graph.clientWidth && graph.scrollHeight <= graph.clientHeight) return;
+          graphPan = {
+            pointerId: event.pointerId,
+            x: event.clientX,
+            y: event.clientY,
+            left: graph.scrollLeft,
+            top: graph.scrollTop
+          };
+          graph.setPointerCapture(event.pointerId);
+          graph.classList.add("is-panning");
+        });
+        graph.addEventListener("pointermove", (event) => {
+          if (!graphPan || graphPan.pointerId !== event.pointerId) return;
+          graph.scrollLeft = graphPan.left - (event.clientX - graphPan.x);
+          graph.scrollTop = graphPan.top - (event.clientY - graphPan.y);
+        });
+        const endGraphPan = (event) => {
+          if (!graphPan || graphPan.pointerId !== event.pointerId) return;
+          graphPan = null;
+          graph.classList.remove("is-panning");
+          if (graph.hasPointerCapture(event.pointerId)) graph.releasePointerCapture(event.pointerId);
+          rememberGraphViewport();
+        };
+        graph.addEventListener("pointerup", endGraphPan);
+        graph.addEventListener("pointercancel", endGraphPan);
       }
 
       document.addEventListener("click", (event) => {
@@ -1601,17 +1787,21 @@ function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
         if (updated) updated.textContent = String(payload.updatedAt || "n/a");
         setHtml("dashboardError", payload.errorHtml);
         setHtml("metricStrip", payload.metricsHtml);
+        rememberGraphViewport();
         setHtml("graph", payload.graphHtml);
         setHtml("inspectorBody", payload.inspectorHtml);
         setHtml("memoryPlane", payload.memoryHtml);
         setHtml("qualityPlane", payload.qualityHtml);
         setHtml("operationsPlane", payload.operationsHtml);
         detailsByNode = payload.detailsByNode || {};
+        applyGraphZoom();
+        restoreGraphViewport();
         bindMapNodes(String(payload.defaultNodeId || ""));
         applyReviewFilter();
         setView(currentView);
       });
 
+      updateGraphZoomControls();
       window.setInterval(requestStreamUpdate, 1500);
       requestStreamUpdate();
     </script>

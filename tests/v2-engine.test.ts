@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { describe, expect, test } from "vitest";
 import { V2MemoryEngine } from "../src/v2-engine.js";
 import { ingestV2TaskEvents } from "../src/v2-task-ingest.js";
@@ -17,6 +18,69 @@ function withEngine(run: (engine: V2MemoryEngine) => void): void {
 }
 
 describe("V2MemoryEngine", () => {
+  test.each(["memory_fts", "evidence_fts"])(
+    "health checks refresh %s after another connection merges segments",
+    (table) => {
+      const dir = mkdtempSync(join(tmpdir(), "retentia-v2-health-"));
+      const file = join(dir, "memory.db");
+      const engine = new V2MemoryEngine(file);
+      const writer = new Database(file);
+      try {
+        for (let index = 0; index < 3; index++) {
+          engine.addMemory({
+            kind: "fact",
+            title: `Evidence ${index}`,
+            body: "Health checks must observe external index changes.",
+          });
+          engine.addEvidence({
+            sourceType: "test",
+            sourceId: String(index),
+            content: `Evidence chunk ${index}`,
+          });
+        }
+        expect(engine.buildHealthReport().status).toBe("pass");
+
+        writer.prepare(`INSERT INTO ${table}(${table}) VALUES ('optimize')`).run();
+
+        const report = engine.buildHealthReport();
+        expect(report.checks.find((check) => check.name === "sqlite_integrity"))
+          .toMatchObject({ status: "pass", details: { result: "ok" } });
+        expect(report.status).toBe("pass");
+        expect(engine.buildHealthReport().status).toBe("pass");
+      } finally {
+        writer.close();
+        engine.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("health checks still reject an actually damaged evidence index", () => {
+    const dir = mkdtempSync(join(tmpdir(), "retentia-v2-health-corrupt-"));
+    const file = join(dir, "memory.db");
+    const engine = new V2MemoryEngine(file);
+    const writer = new Database(file);
+    try {
+      engine.addEvidence({
+        sourceType: "test",
+        sourceId: "corruption-check",
+        content: "An actual missing index segment must fail integrity checks.",
+      });
+      writer.unsafeMode(true);
+      writer.exec("DELETE FROM evidence_fts_data WHERE id > 10");
+      writer.unsafeMode(false);
+
+      const report = engine.buildHealthReport();
+      expect(report.status).toBe("fail");
+      expect(report.checks.find((check) => check.name === "sqlite_integrity")?.status)
+        .toBe("fail");
+    } finally {
+      writer.close();
+      engine.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("stores events, distilled memories, and graph edges", () => {
     withEngine((engine) => {
       const event = engine.addEvent({

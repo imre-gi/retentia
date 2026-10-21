@@ -896,10 +896,20 @@ export class V2MemoryEngine {
     );
 
     try {
-      const row = this.db.prepare("PRAGMA quick_check").get() as {
-        quick_check?: string;
-      };
-      const result = String(row?.quick_check || "");
+      const result = this.db.transaction(() => {
+        // SQLite's FTS5 integrity callback can retain stale segment metadata
+        // after another connection merges segments. MATCH refreshes each
+        // FTS handle; keep it and quick_check in the same read snapshot.
+        for (const table of ["memory_fts", "evidence_fts"]) {
+          this.db
+            .prepare(`SELECT rowid FROM ${table} WHERE ${table} MATCH ? LIMIT 1`)
+            .get('"retentia-doctor-smoke-no-match"');
+        }
+        const rows = this.db.prepare("PRAGMA quick_check").all() as Array<{
+          quick_check: string;
+        }>;
+        return rows.map((row) => row.quick_check).join("\n");
+      }).deferred();
       pushCheck(
         "sqlite_integrity",
         result === "ok" ? "pass" : "fail",
